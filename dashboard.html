@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fireworks AI 代理分流控制面板</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #060913;
+      --bg-card: rgba(13, 20, 38, 0.7);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --text-main: #f1f5f9;
+      --text-muted: #64748b;
+      --primary: #f43f5e;
+      --secondary: #e11d48;
+      --gradient-primary: linear-gradient(135deg, #f43f5e 0%, #fb7185 100%);
+      --gradient-accent: linear-gradient(135deg, #f43f5e 0%, #d946ef 100%);
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(244, 63, 94, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(217, 70, 239, 0.05) 0%, transparent 40%);
+    }
+
+    .glass {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .app-container {
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 20px;
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 30px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      width: 40px;
+      height: 40px;
+      background: var(--gradient-primary);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #fff;
+      font-size: 20px;
+      box-shadow: 0 0 20px rgba(244, 63, 94, 0.4);
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.5px;
+      background: linear-gradient(to right, #fff, var(--text-muted));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .badge {
+      padding: 6px 12px;
+      border-radius: 99px;
+      font-size: 13px;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge-primary {
+      background: rgba(244, 63, 94, 0.1);
+      border: 1px solid rgba(244, 63, 94, 0.2);
+      color: var(--primary);
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      background-color: var(--success);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--success);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+      70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 30px;
+    }
+
+    @media (max-width: 900px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card {
+      padding: 24px;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .card:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    label {
+      font-size: 14px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    input, select {
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border-color);
+      padding: 12px 16px;
+      border-radius: 8px;
+      color: var(--text-main);
+      font-size: 15px;
+      outline: none;
+      transition: all 0.3s ease;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 10px rgba(244, 63, 94, 0.15);
+    }
+
+    .btn {
+      padding: 12px 20px;
+      border-radius: 8px;
+      border: none;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.3s ease;
+    }
+
+    .btn-primary {
+      background: var(--gradient-primary);
+      color: #fff;
+      box-shadow: 0 4px 15px rgba(244, 63, 94, 0.2);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(244, 63, 94, 0.4);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      color: var(--danger);
+    }
+
+    .btn-danger:hover {
+      background: var(--danger);
+      color: #fff;
+    }
+
+    .key-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 480px;
+      overflow-y: auto;
+      padding-right: 6px;
+    }
+
+    .key-list::-webkit-scrollbar {
+      width: 6px;
+    }
+    .key-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .key-list::-webkit-scrollbar-thumb {
+      background: var(--border-color);
+      border-radius: 4px;
+    }
+
+    .key-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      transition: all 0.3s ease;
+    }
+
+    .key-item.active {
+      border-color: rgba(244, 63, 94, 0.4);
+      background: rgba(244, 63, 94, 0.03);
+    }
+
+    .key-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-grow: 1;
+    }
+
+    .key-index {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.05);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .key-item.active .key-index {
+      background: var(--gradient-primary);
+      color: #fff;
+    }
+
+    .key-string {
+      font-family: monospace;
+      font-size: 14px;
+      word-break: break-all;
+    }
+
+    .key-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .mode-selector {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+
+    .mode-option {
+      padding: 10px;
+      text-align: center;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.3s ease;
+      user-select: none;
+    }
+
+    .mode-option.active {
+      background: var(--gradient-primary);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .login-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: var(--bg-dark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      background-image: 
+        radial-gradient(circle at center, rgba(244, 63, 94, 0.1) 0%, transparent 60%);
+    }
+
+    .login-card {
+      width: 100%;
+      max-width: 400px;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      text-align: center;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 16px 24px;
+      border-radius: 8px;
+      color: #fff;
+      font-weight: 500;
+      font-size: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      z-index: 2000;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .toast-success {
+      background: var(--success);
+    }
+
+    .toast-error {
+      background: var(--danger);
+    }
+
+    .no-keys {
+      padding: 40px;
+      text-align: center;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .log-table th {
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-color);
+    }
+    
+    .log-table td {
+      padding: 12px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      vertical-align: middle;
+    }
+    
+    .log-table tbody tr:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+    
+    .log-tag {
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      display: inline-block;
+    }
+    
+    .log-tag-model {
+      background: rgba(244, 63, 94, 0.15);
+      color: #ff4b72;
+      border: 1px solid rgba(244, 63, 94, 0.3);
+    }
+    
+    .log-tag-priority {
+      background: rgba(217, 70, 239, 0.15);
+      color: #d946ef;
+      border: 1px solid rgba(217, 70, 239, 0.3);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Login Overlay -->
+  <div id="loginOverlay" class="login-container" style="display: none;">
+    <div class="login-card glass">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 10px;">
+        <div class="logo-icon">F</div>
+        <h2>控制面板登录</h2>
+        <p style="font-size: 14px; color: var(--text-muted);">请输入本地代理鉴权密码访问面板</p>
+      </div>
+      <div class="form-group" style="text-align: left;">
+        <label for="loginPassword">访问密码</label>
+        <input type="password" id="loginPassword" placeholder="输入 PASSWORD">
+      </div>
+      <button class="btn btn-primary" onclick="login()">登录</button>
+      <div id="loginError" style="color: var(--danger); font-size: 14px; display: none;">密码错误，请重试</div>
+    </div>
+  </div>
+
+  <!-- Main App Content -->
+  <div class="app-container" id="appContent">
+    <header>
+      <div class="logo-container">
+        <div class="logo-icon">F</div>
+        <div>
+          <h1>Fireworks AI API 控制面板</h1>
+          <p style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">实时 Key 轮询与故障隔离代理</p>
+        </div>
+      </div>
+      <div id="serviceStatusBadge" class="badge badge-primary">
+        <span class="pulse-dot"></span>
+        代理服务运行中
+      </div>
+    </header>
+
+    <!-- Spend monitoring banner -->
+    <div id="spendWarningBanner" class="glass" style="display: none; padding: 16px 24px; border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.1); display: flex; align-items: center; justify-content: space-between; border-radius: 12px; margin-bottom: 10px;">
+      <div>
+        <h3 style="color: var(--danger); font-size: 16px; font-weight: 600;">🚨 代理服务已暂停使用</h3>
+        <p style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">本月已消耗额度超过设定的安全阀值 ($<span id="bannerMaxSpend">5.50</span> USD)。当前用量: $<span id="bannerCurrentSpend">0.0000</span> USD。</p>
+      </div>
+      <span class="badge" style="background: rgba(239, 68, 68, 0.2); color: var(--danger); font-weight: bold;">已暂停</span>
+    </div>
+
+    <div class="dashboard-grid">
+      <!-- Left: Key Management -->
+      <div class="card glass">
+        <div class="card-title">
+          <span>密钥管理 (KEY)</span>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn btn-secondary" id="refreshBalancesBtn" style="padding: 6px 12px; font-size:13px;" onclick="queryAllBalances()">校验 Key 状态</button>
+            <span id="keyCountBadge" class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-main);">0 个密钥</span>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 12px; margin-bottom: 24px;">
+          <input type="text" id="newKeyInput" placeholder="输入新的 API Key (例如 fw_...)" style="flex-grow: 1;">
+          <button class="btn btn-primary" onclick="addKey()">添加密钥</button>
+        </div>
+
+        <div class="key-list" id="keyListContainer">
+          <div class="no-keys">暂无配置密钥</div>
+        </div>
+      </div>
+
+      <!-- Right: Configurations -->
+      <div style="display: flex; flex-direction: column; gap: 30px;">
+        <!-- Rotation settings -->
+        <div class="card glass">
+          <h3 class="card-title">分流轮询设置</h3>
+          
+          <div class="form-group">
+            <label>运行模式</label>
+            <div class="mode-selector">
+              <div class="mode-option" id="modeExhaustion" onclick="setMode('exhaustion')">故障再更换</div>
+              <div class="mode-option" id="modeRoundRobin" onclick="setMode('round-robin')">轮询分流</div>
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="modeDesc">
+              故障再更换：保持使用当前选中 Key，直到发生 429 / 402 / 401 才会轮换并自动重试。
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label for="outboundProxy">出口代理 (Proxy)</label>
+            <input type="text" id="outboundProxy" placeholder="例如 http://127.0.0.1:7890 (可选)">
+          </div>
+
+          <!-- Spend and Email configurations -->
+          <div class="form-group">
+            <label for="maxAllowedSpendInput">本月额度预警阀值 (USD)</label>
+            <input type="number" step="0.1" id="maxAllowedSpendInput" placeholder="默认 5.5">
+          </div>
+
+          <div class="form-group">
+            <label for="notificationEmailInput">通知邮箱 (接收超额警报)</label>
+            <input type="email" id="notificationEmailInput" placeholder="例如 email@qq.com">
+          </div>
+
+          <button class="btn btn-primary" style="width: 100%;" onclick="saveSystemConfig()">保存系统设置</button>
+        </div>
+
+        <!-- Auth settings -->
+        <div class="card glass">
+          <h3 class="card-title">SMTP 邮件发送设置</h3>
+          <div class="form-group">
+            <label for="smtpHostInput">SMTP 主机地址</label>
+            <input type="text" id="smtpHostInput" placeholder="例如 smtp.qq.com">
+          </div>
+          <div class="form-group">
+            <label for="smtpPortInput">SMTP 端口</label>
+            <input type="number" id="smtpPortInput" placeholder="默认 465">
+          </div>
+          <div class="form-group">
+            <label for="smtpUserInput">SMTP 用户邮箱</label>
+            <input type="email" id="smtpUserInput" placeholder="例如 2607790564@qq.com">
+          </div>
+          <div class="form-group">
+            <label for="smtpPassInput">SMTP 授权密码 (或授权码)</label>
+            <input type="password" id="smtpPassInput" placeholder="输入邮箱客户端授权码">
+          </div>
+          <button class="btn btn-secondary" style="width: 100%; margin-bottom: 12px;" onclick="saveSmtpConfig()">保存 SMTP 配置</button>
+
+          <h3 class="card-title" style="margin-top: 20px;">鉴权安全设置</h3>
+          <div class="form-group">
+            <label for="adminPassword">控制面板 & 客户端密码</label>
+            <input type="password" id="adminPassword" placeholder="输入新密码 (留空则不开启验证)">
+          </div>
+          <button class="btn btn-secondary" style="width: 100%;" onclick="savePassword()">更新密码</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log Section (Usage Records) -->
+    <div class="card glass" style="margin-top: 30px;">
+      <div class="card-title">
+        <span>调用使用记录 (Recent Request Logs)</span>
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-secondary" style="padding: 6px 12px; font-size:13px;" onclick="fetchLogs()">刷新日志</button>
+          <button class="btn btn-danger" style="padding: 6px 12px; font-size:13px;" onclick="clearLogs()">清除记录</button>
+        </div>
+      </div>
+      
+      <div style="overflow-x: auto;">
+        <table class="log-table" style="width: 100%; border-collapse: collapse; text-align: left; font-size: 14px;">
+          <thead>
+            <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-muted); font-weight: 600;">
+              <th style="padding: 12px 8px;">时间</th>
+              <th style="padding: 12px 8px;">模型</th>
+              <th style="padding: 12px 8px;">服务等级</th>
+              <th style="padding: 12px 8px;">使用密钥</th>
+              <th style="padding: 12px 8px; text-align: right;">首字 / 总时</th>
+              <th style="padding: 12px 8px; text-align: right;">Token 消耗 (输入/输出/总)</th>
+              <th style="padding: 12px 8px; text-align: right;">预估花费</th>
+            </tr>
+          </thead>
+          <tbody id="logTableBody">
+            <tr>
+              <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-muted); font-style: italic;">暂无调用记录</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Element -->
+  <div id="toast" class="toast"></div>
+
+  <script>
+    let config = {
+      keysDetail: [],
+      currentIndex: 0,
+      mode: 'round-robin',
+      proxyUrl: '',
+      hasPassword: false
+    };
+
+    let keyBalances = {};
+
+    let authToken = localStorage.getItem('proxy_auth_token') || '';
+
+    window.addEventListener('DOMContentLoaded', () => {
+      fetchConfig();
+      fetchLogs();
+      setInterval(fetchLogs, 5000);
+    });
+
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      toast.className = `toast toast-${type} show`;
+      toast.innerText = message;
+      setTimeout(() => {
+        toast.className = 'toast';
+      }, 3000);
+    }
+
+    async function makeRequest(url, options = {}) {
+      if (!options.headers) options.headers = {};
+      if (authToken) {
+        options.headers['Authorization'] = `Bearer ${authToken}`;
+      }
+      
+      const response = await fetch(url, options);
+      if (response.status === 401) {
+        document.getElementById('loginOverlay').style.display = 'flex';
+        document.getElementById('appContent').style.opacity = '0.3';
+        throw new Error('Unauthorized');
+      }
+      return response;
+    }
+
+    async function login() {
+      const password = document.getElementById('loginPassword').value;
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        const data = await res.json();
+        if (data.success) {
+          authToken = password;
+          localStorage.setItem('proxy_auth_token', password);
+          document.getElementById('loginOverlay').style.display = 'none';
+          document.getElementById('appContent').style.opacity = '1';
+          document.getElementById('loginError').style.display = 'none';
+          fetchConfig();
+          showToast('登录成功');
+        } else {
+          document.getElementById('loginError').style.display = 'block';
+        }
+      } catch (err) {
+        showToast('登录出错', 'error');
+      }
+    }
+
+    async function fetchConfig() {
+      try {
+        const response = await makeRequest('/api/config');
+        config = await response.json();
+        
+        document.getElementById('outboundProxy').value = config.proxyUrl || '';
+        document.getElementById('adminPassword').value = config.hasPassword ? '********' : '';
+        document.getElementById('maxAllowedSpendInput').value = config.maxAllowedSpend !== undefined ? config.maxAllowedSpend : 5.5;
+        document.getElementById('notificationEmailInput').value = config.notificationEmail || '';
+
+        // SMTP settings populate
+        document.getElementById('smtpHostInput').value = config.smtpHost || '';
+        document.getElementById('smtpPortInput').value = config.smtpPort || 465;
+        document.getElementById('smtpUserInput').value = config.smtpUser || '';
+        document.getElementById('smtpPassInput').value = config.smtpPass ? '********' : '';
+
+        // Update Spend Alert Banner UI
+        const spendWarningBanner = document.getElementById('spendWarningBanner');
+        const serviceStatusBadge = document.getElementById('serviceStatusBadge');
+        if (config.isSuspended) {
+          spendWarningBanner.style.display = 'flex';
+          document.getElementById('bannerMaxSpend').innerText = Number(config.maxAllowedSpend).toFixed(2);
+          document.getElementById('bannerCurrentSpend').innerText = Number(config.currentSpendUsage).toFixed(4);
+          serviceStatusBadge.className = 'badge';
+          serviceStatusBadge.style.background = 'rgba(239, 68, 68, 0.1)';
+          serviceStatusBadge.style.border = '1px solid rgba(239, 68, 68, 0.2)';
+          serviceStatusBadge.style.color = 'var(--danger)';
+          serviceStatusBadge.innerHTML = '<span class="pulse-dot" style="background-color: var(--danger); box-shadow: 0 0 10px var(--danger);"></span>超额已暂停';
+        } else {
+          spendWarningBanner.style.display = 'none';
+          serviceStatusBadge.className = 'badge badge-primary';
+          serviceStatusBadge.innerHTML = '<span class="pulse-dot"></span>代理服务运行中';
+        }
+        
+        setModeUI(config.mode);
+        renderKeysList();
+      } catch (err) {
+        console.error('Failed to load config:', err);
+      }
+    }
+
+    function setModeUI(mode) {
+      config.mode = mode;
+      const roundRobinOpt = document.getElementById('modeRoundRobin');
+      const exhaustionOpt = document.getElementById('modeExhaustion');
+      const desc = document.getElementById('modeDesc');
+
+      if (mode === 'round-robin') {
+        roundRobinOpt.classList.add('active');
+        exhaustionOpt.classList.remove('active');
+        desc.innerText = '轮询分流：每次客户端请求，都自动顺延使用下一个 Key (分摊配额负载)。';
+      } else {
+        exhaustionOpt.classList.add('active');
+        roundRobinOpt.classList.remove('active');
+        desc.innerText = '故障再更换：保持使用当前选中 Key，直到发生 429/402/401 失败才轮换至下一个 Key 并自动重试。';
+      }
+    }
+
+    function setMode(mode) {
+      setModeUI(mode);
+    }
+
+    function renderKeyBalance(kd) {
+      if (!kd.last_checked) {
+        return `<span style="color: var(--text-muted);">等待校验...</span>`;
+      }
+      if (kd.status !== 'Active') {
+        return `<span style="color: var(--danger);">${kd.status}</span>`;
+      }
+      
+      const remaining = Number(kd.monthly_remaining).toFixed(2);
+      const limit = Number(kd.monthly_limit).toFixed(2);
+      const used = Number(kd.monthly_used).toFixed(4);
+      
+      return `<span style="color: var(--primary); font-weight: 500;">账号ID: ${kd.account_id}</span> 
+              <span style="margin-left: 10px; opacity: 0.9; font-size: 12px; color: var(--success);">已用: $${used} | 剩余: $${remaining} / $${limit}</span>`;
+    }
+
+    async function queryAllBalances() {
+      const btn = document.getElementById('refreshBalancesBtn');
+      if (!btn) return;
+      const originalText = btn.innerText;
+      btn.disabled = true;
+      btn.innerText = '正在校验...';
+      
+      try {
+        const res = await makeRequest('/api/balances', {
+          method: 'POST'
+        });
+        const data = await res.json();
+        if (data.success && Array.isArray(data.balances)) {
+          config.keysDetail = data.balances;
+          renderKeysList();
+          showToast('所有 Key 校验成功');
+        } else {
+          showToast('校验失败: ' + (data.error || '未知错误'), 'error');
+        }
+      } catch (err) {
+        showToast('校验出错: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerText = originalText;
+      }
+    }
+
+    function renderKeysList() {
+      const container = document.getElementById('keyListContainer');
+      const countBadge = document.getElementById('keyCountBadge');
+      
+      const list = config.keysDetail || [];
+      countBadge.innerText = `${list.length} 个密钥`;
+      
+      if (list.length === 0) {
+        container.innerHTML = '<div class="no-keys">暂无配置密钥</div>';
+        return;
+      }
+
+      container.innerHTML = '';
+      list.forEach((kd, index) => {
+        const isActive = index === config.currentIndex;
+        const keyItem = document.createElement('div');
+        keyItem.className = `key-item ${isActive ? 'active' : ''}`;
+        
+        keyItem.innerHTML = `
+          <div class="key-info" style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 70%; overflow: hidden;">
+            <div style="display: flex; align-items: center; gap: 12px; width: 100%;">
+              <div class="key-index">${index + 1}</div>
+              <div class="key-string" style="font-family: monospace; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-grow: 1;">${escapeHtml(kd.key)}</div>
+            </div>
+            <div class="key-balance-info" style="margin-left: 40px; font-size: 13px; color: var(--text-muted);">
+              ${renderKeyBalance(kd)}
+            </div>
+          </div>
+          <div class="key-actions">
+            ${isActive 
+              ? `<span class="badge" style="background: rgba(244, 63, 94, 0.15); color: var(--primary); font-weight:600;"><span class="pulse-dot"></span>使用中</span>`
+              : `<button class="btn btn-secondary" style="padding: 6px 12px; font-size:12px;" onclick="setActiveKey(${index})">设为使用</button>`
+            }
+            <button class="btn btn-danger" style="padding: 6px 12px; font-size:12px;" onclick="deleteKey(${index})">删除</button>
+          </div>
+        `;
+        container.appendChild(keyItem);
+      });
+    }
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    async function setActiveKey(index) {
+      try {
+        const res = await makeRequest('/api/switch-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ index })
+        });
+        const result = await res.json();
+        if (result.success) {
+          config.currentIndex = index;
+          renderKeysList();
+          showToast(`已成功切换到第 ${index + 1} 个 Key`);
+        }
+      } catch (err) {
+        showToast('切换 Key 失败', 'error');
+      }
+    }
+
+    async function addKey() {
+      const input = document.getElementById('newKeyInput');
+      const newKey = input.value.trim();
+      if (!newKey) {
+        showToast('请输入有效的 Key', 'error');
+        return;
+      }
+      
+      const list = config.keysDetail || [];
+      list.push({
+        key: newKey,
+        account_id: '',
+        display_name: '',
+        email: '',
+        monthly_limit: 0.0,
+        monthly_used: 0.0,
+        monthly_remaining: 0.0,
+        status: 'Pending Verification',
+        last_checked: ''
+      });
+      config.keysDetail = list;
+      input.value = '';
+      await saveConfigToServer();
+    }
+
+    async function deleteKey(index) {
+      if (confirm(`确认要删除第 ${index + 1} 个 Key 吗？`)) {
+        const list = config.keysDetail || [];
+        list.splice(index, 1);
+        config.keysDetail = list;
+        if (config.currentIndex >= list.length) {
+          config.currentIndex = Math.max(0, list.length - 1);
+        }
+        await saveConfigToServer();
+      }
+    }
+
+    async function saveSystemConfig() {
+      config.proxyUrl = document.getElementById('outboundProxy').value.trim();
+      config.notificationEmail = document.getElementById('notificationEmailInput').value.trim();
+      config.maxAllowedSpend = parseFloat(document.getElementById('maxAllowedSpendInput').value) || 5.5;
+      await saveConfigToServer();
+    }
+
+    async function saveSmtpConfig() {
+      const host = document.getElementById('smtpHostInput').value.trim();
+      const port = parseInt(document.getElementById('smtpPortInput').value) || 465;
+      const user = document.getElementById('smtpUserInput').value.trim();
+      const pass = document.getElementById('smtpPassInput').value.trim();
+
+      const list = config.keysDetail || [];
+      const keysArray = list.map(kd => kd.key).filter(Boolean);
+
+      try {
+        const payload = {
+          keys: keysArray,
+          mode: config.mode,
+          proxyUrl: config.proxyUrl,
+          notificationEmail: config.notificationEmail,
+          maxAllowedSpend: config.maxAllowedSpend,
+          smtpHost: host,
+          smtpPort: port,
+          smtpUser: user
+        };
+        if (pass !== '********') {
+          payload.smtpPass = pass;
+        }
+
+        const response = await makeRequest('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (result.success) {
+          showToast('SMTP 配置保存成功');
+          fetchConfig();
+        }
+      } catch (err) {
+        showToast('保存 SMTP 配置失败', 'error');
+      }
+    }
+
+    async function savePassword() {
+      const passwordInput = document.getElementById('adminPassword').value.trim();
+      if (passwordInput === '********') {
+        showToast('未检测到密码修改');
+        return;
+      }
+      
+      const list = config.keysDetail || [];
+      const keysArray = list.map(kd => kd.key).filter(Boolean);
+
+      try {
+        const response = await makeRequest('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            keys: keysArray,
+            mode: config.mode,
+            proxyUrl: config.proxyUrl,
+            password: passwordInput
+          })
+        });
+        const result = await response.json();
+        if (result.success) {
+          showToast('密码已更新');
+          if (passwordInput === '') {
+            authToken = '';
+            localStorage.removeItem('proxy_auth_token');
+          } else {
+            authToken = passwordInput;
+            localStorage.setItem('proxy_auth_token', passwordInput);
+          }
+          fetchConfig();
+        }
+      } catch (err) {
+        showToast('保存设置失败', 'error');
+      }
+    }
+
+    async function saveConfigToServer() {
+      const list = config.keysDetail || [];
+      const keysArray = list.map(kd => kd.key).filter(Boolean);
+
+      try {
+        const response = await makeRequest('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            keys: keysArray,
+            mode: config.mode,
+            proxyUrl: config.proxyUrl,
+            notificationEmail: config.notificationEmail,
+            maxAllowedSpend: config.maxAllowedSpend,
+            smtpHost: config.smtpHost,
+            smtpPort: config.smtpPort,
+            smtpSecure: config.smtpSecure,
+            smtpUser: config.smtpUser
+            // Pass and password won't be modified here
+          })
+        });
+        const result = await response.json();
+        if (result.success) {
+          showToast('设置保存成功');
+          fetchConfig();
+        }
+      } catch (err) {
+        showToast('保存设置失败', 'error');
+      }
+    }
+
+    async function fetchLogs() {
+      try {
+        const response = await makeRequest('/api/logs');
+        const logs = await response.json();
+        renderLogs(logs);
+      } catch (err) {
+        console.error('Failed to load logs:', err);
+      }
+    }
+
+    function renderLogs(logs) {
+      const tbody = document.getElementById('logTableBody');
+      if (!tbody) return;
+      
+      if (!logs || logs.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-muted); font-style: italic;">暂无调用记录</td>
+          </tr>
+        `;
+        return;
+      }
+      
+      tbody.innerHTML = '';
+      logs.forEach(log => {
+        const tr = document.createElement('tr');
+        const timeStr = new Date(log.timestamp).toLocaleTimeString();
+        const keyDisplay = `Key [${log.keyIndex}] ${log.maskedKey}`;
+        const ttftStr = log.ttft ? `${log.ttft}ms` : '-';
+        const durationStr = `${log.duration}ms`;
+        
+        let tokensStr = `${log.prompt_tokens}`;
+        if (log.cached_tokens > 0) {
+          tokensStr += ` <span style="font-size:11px;color:#fb7185;opacity:0.9;">(缓存:${log.cached_tokens})</span>`;
+        }
+        tokensStr += ` / ${log.completion_tokens} / ${log.total_tokens}`;
+        
+        const costStr = log.cost > 0 ? `$${log.cost.toFixed(6)}` : '$0.000000';
+        
+        tr.innerHTML = `
+          <td style="padding: 12px 8px; color: var(--text-muted);">${timeStr}</td>
+          <td style="padding: 12px 8px;"><span class="log-tag log-tag-model">${escapeHtml(log.model)}</span></td>
+          <td style="padding: 12px 8px;"><span class="log-tag ${log.isPriority ? 'log-tag-priority' : 'log-tag-model'}">${log.isPriority ? 'Priority' : 'Standard'}</span></td>
+          <td style="padding: 12px 8px; font-family: monospace; font-size: 13px; color: var(--text-muted);">${escapeHtml(keyDisplay)}</td>
+          <td style="padding: 12px 8px; text-align: right; color: var(--text-muted);">${ttftStr} / ${durationStr}</td>
+          <td style="padding: 12px 8px; text-align: right; font-family: monospace;">${tokensStr}</td>
+          <td style="padding: 12px 8px; text-align: right; font-family: monospace; color: var(--warning); font-weight: 500;">${costStr}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function clearLogs() {
+      if (!confirm('确认要清除所有调用记录吗？')) return;
+      try {
+        const response = await makeRequest('/api/logs/clear', { method: 'POST' });
+        const result = await response.json();
+        if (result.success) {
+          showToast('调用记录已清空');
+          fetchLogs();
+        }
+      } catch (err) {
+        showToast('清空记录失败', 'error');
+      }
+    }
+  </script>
+</body>
+</html>
