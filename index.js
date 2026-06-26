@@ -130,8 +130,12 @@ keys.forEach((k, idx) => {
 const requestLogs = [];
 const MAX_LOGS = 200;
 
+// Track which keys have already sent out alert emails so we don't spam.
+// We only notify when a key goes over maxAllowedSpend for the first time.
+const notifiedKeys = new Set();
+
 // Notification and Suspend check functions
-async function sendNotificationEmail(spend) {
+async function sendNotificationEmail(newlyExcessiveKey) {
   if (!notificationEmail) {
     console.warn('[SMTP] No notification email configured.');
     return;
@@ -147,50 +151,54 @@ async function sendNotificationEmail(spend) {
     }
   });
 
-  // Filter out and construct details for keys where usage exceeds 5.5 (or maxAllowedSpend)
-  const excessiveKeys = keysDetail.filter(kd => kd.monthly_used >= maxAllowedSpend);
-  let keysHtmlList = '';
-  let keysTextList = '';
+  // Filter out all currently suspended keys (spend >= maxAllowedSpend)
+  const currentlySuspendedKeys = keysDetail.filter(kd => kd.monthly_used >= maxAllowedSpend);
+  
+  // Format for the currently triggered key
+  const triggeredKeyInfo = `Key: ${maskKey(newlyExcessiveKey.key)}\nAccount ID: ${newlyExcessiveKey.account_id}\nEmail: ${newlyExcessiveKey.email}\nSpend: $${newlyExcessiveKey.monthly_used.toFixed(4)} USD\nLimit: $${newlyExcessiveKey.monthly_limit.toFixed(2)} USD\nLast Checked: ${newlyExcessiveKey.last_checked}`;
 
-  if (excessiveKeys.length > 0) {
-    keysTextList = excessiveKeys.map(kd => {
-      return `Key: ${maskKey(kd.key)}\nAccount ID: ${kd.account_id}\nEmail: ${kd.email}\nSpend: $${kd.monthly_used.toFixed(4)} USD\nLimit: $${kd.monthly_limit.toFixed(2)} USD\nLast Checked: ${kd.last_checked}\n----------------------`;
-    }).join('\n\n');
+  // Format list for all currently suspended keys
+  const suspendedListText = currentlySuspendedKeys.map(kd => {
+    return `- Email/Account: ${kd.email || kd.account_id || maskKey(kd.key)} (Spend: $${kd.monthly_used.toFixed(4)} USD, Last Checked: ${kd.last_checked})`;
+  }).join('\n');
 
-    keysHtmlList = excessiveKeys.map(kd => {
-      return `
-      <div style="border: 1px solid #ffccd5; background-color: #fff8f8; padding: 15px; margin-bottom: 15px; border-radius: 6px;">
-        <h4 style="margin: 0 0 10px 0; color: #ef4444;">Key: ${maskKey(kd.key)}</h4>
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr><td style="padding: 4px 0; font-weight: bold; color: #555; width: 120px;">Account ID:</td><td style="padding: 4px 0; color: #333;">${kd.account_id}</td></tr>
-          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Email:</td><td style="padding: 4px 0; color: #333;">${kd.email}</td></tr>
-          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Spend:</td><td style="padding: 4px 0; font-size: 16px; color: #ef4444; font-weight: bold;">$${kd.monthly_used.toFixed(4)} USD</td></tr>
-          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Account Limit:</td><td style="padding: 4px 0; color: #333;">$${kd.monthly_limit.toFixed(2)} USD</td></tr>
-          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Last Checked:</td><td style="padding: 4px 0; color: #666; font-size: 13px;">${kd.last_checked}</td></tr>
-        </table>
-      </div>
-      `;
-    }).join('');
-  } else {
-    keysTextList = 'No single key exceeded the individual threshold, but cumulative/aggregate spend of all keys triggered the system suspend.';
-    keysHtmlList = `<p style="color: #666;">No single key exceeded the individual threshold, but cumulative/aggregate spend of all keys triggered the system suspend.</p>`;
-  }
+  const suspendedListHtml = currentlySuspendedKeys.map(kd => {
+    return `
+    <div style="border-left: 4px solid #ef4444; background-color: #fcfcfc; padding: 10px; margin-bottom: 10px; border-radius: 0 4px 4px 0;">
+      <strong>Email/Account:</strong> ${kd.email || kd.account_id || maskKey(kd.key)}<br/>
+      <strong>Spend:</strong> <span style="color: #ef4444; font-weight: bold;">$${kd.monthly_used.toFixed(4)} USD</span><br/>
+      <strong>Last Checked:</strong> ${kd.last_checked}
+    </div>
+    `;
+  }).join('');
 
   const mailOptions = {
     from: smtpUser || '"Fireworks Proxy Monitoring" <tokendance_agent@qq.com>',
     to: notificationEmail,
-    subject: '🚨 Fireworks API Proxy Suspended - Monthly Spend Limit Exceeded',
-    text: `Notice: The Fireworks API Proxy has automatically suspended key usage because the monthly spend exceeded the threshold of $${maxAllowedSpend.toFixed(2)} USD.\n\nTime of detection: ${new Date().toLocaleString()}\n\nExcessive Spend Keys Details:\n\n${keysTextList}`,
+    subject: `🚨 Fireworks Key Suspended - ${newlyExcessiveKey.email || newlyExcessiveKey.account_id || maskKey(newlyExcessiveKey.key)}`,
+    text: `${newlyExcessiveKey.email || newlyExcessiveKey.account_id || maskKey(newlyExcessiveKey.key)}在${newlyExcessiveKey.last_checked}时间时额度用量已经超过${maxAllowedSpend.toFixed(2)}刀，目前已经暂停使用，下面是他的详细信息：\n\n${triggeredKeyInfo}\n\n以下是目前暂停的邮箱和他们的详细信息：\n\n${suspendedListText}`,
     html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #ffccd5; background-color: #fff5f5; border-radius: 8px;">
-      <h2 style="color: #ef4444; margin-top: 0;">🚨 Monthly Spend Limit Exceeded</h2>
-      <p style="font-size: 16px; color: #333;">The Fireworks API Proxy has automatically suspended key usage because the system limit of <strong>$${maxAllowedSpend.toFixed(2)} USD</strong> has been reached.</p>
+      <h2 style="color: #ef4444; margin-top: 0;">🚨 Fireworks Key Suspended</h2>
+      <p style="font-size: 15px; color: #333;">
+        <strong>${newlyExcessiveKey.email || newlyExcessiveKey.account_id || maskKey(newlyExcessiveKey.key)}</strong> 在 <code>${newlyExcessiveKey.last_checked}</code> 时间时额度用量已经超过 <strong>${maxAllowedSpend.toFixed(2)} 刀</strong>，目前已经暂停使用，下面是他的详细信息：
+      </p>
       
-      <h3 style="color: #333; margin-top: 20px; border-bottom: 2px solid #ef4444; padding-bottom: 5px;">Excessive Spend Keys (Spend >= $${maxAllowedSpend.toFixed(2)} USD):</h3>
-      <div style="margin-top: 15px;">
-        ${keysHtmlList}
+      <div style="border: 1px solid #ffccd5; background-color: #fff8f8; padding: 15px; border-radius: 6px; margin: 15px 0;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr><td style="padding: 4px 0; font-weight: bold; color: #555; width: 120px;">Account ID:</td><td style="padding: 4px 0; color: #333;">${newlyExcessiveKey.account_id}</td></tr>
+          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Email:</td><td style="padding: 4px 0; color: #333;">${newlyExcessiveKey.email}</td></tr>
+          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Spend:</td><td style="padding: 4px 0; font-size: 16px; color: #ef4444; font-weight: bold;">$${newlyExcessiveKey.monthly_used.toFixed(4)} USD</td></tr>
+          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Account Limit:</td><td style="padding: 4px 0; color: #333;">$${newlyExcessiveKey.monthly_limit.toFixed(2)} USD</td></tr>
+          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Last Checked:</td><td style="padding: 4px 0; color: #666; font-size: 13px;">${newlyExcessiveKey.last_checked}</td></tr>
+        </table>
       </div>
 
-      <p style="font-size: 14px; color: #666; border-top: 1px solid #ddd; padding-top: 10px; margin-top: 20px;">This check runs automatically every 5 minutes.</p>
+      <h3 style="color: #333; margin-top: 20px; border-bottom: 2px solid #ef4444; padding-bottom: 5px;">以下是目前暂停的邮箱和他们的详细信息：</h3>
+      <div style="margin-top: 15px;">
+        ${suspendedListHtml}
+      </div>
+
+      <p style="font-size: 13px; color: #666; border-top: 1px solid #ddd; padding-top: 10px; margin-top: 20px;">This check runs automatically every 5 minutes.</p>
     </div>`
   };
 
@@ -265,19 +273,30 @@ async function fetchAccountsAndSpend() {
     currentSpendUsage = totalUsage;
     console.log(`[Spend Check] Aggregate spend usage of all keys: $${totalUsage.toFixed(4)} USD (Limit: $${maxAllowedSpend.toFixed(2)} USD)`);
 
+    // Detect keys that have newly exceeded 5.5 USD (maxAllowedSpend)
+    for (const kd of keysDetail) {
+      if (kd.monthly_used >= maxAllowedSpend) {
+        if (!notifiedKeys.has(kd.key)) {
+          notifiedKeys.add(kd.key);
+          console.log(`[Spend Check] Key ${maskKey(kd.key)} newly exceeded the threshold. Sending notification email.`);
+          await sendNotificationEmail(kd);
+        }
+      } else {
+        // If usage falls below threshold (e.g. new billing month or limit updated), clear the notification flag
+        if (notifiedKeys.has(kd.key)) {
+          notifiedKeys.delete(kd.key);
+        }
+      }
+    }
+
     if (totalUsage >= maxAllowedSpend) {
       if (!isSuspended) {
         isSuspended = true;
         console.warn(`[Spend Check] Spend limit exceeded. Suspending all API requests!`);
       }
-      if (!emailSentStatus) {
-        emailSentStatus = true;
-        await sendNotificationEmail(totalUsage);
-      }
     } else {
       if (isSuspended) {
         isSuspended = false;
-        emailSentStatus = false;
         console.log(`[Spend Check] Spend usage recovered below threshold. Resuming normal operations.`);
       }
     }
