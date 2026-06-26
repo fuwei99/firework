@@ -147,28 +147,49 @@ async function sendNotificationEmail(spend) {
     }
   });
 
+  // Filter out and construct details for keys where usage exceeds 5.5 (or maxAllowedSpend)
+  const excessiveKeys = keysDetail.filter(kd => kd.monthly_used >= maxAllowedSpend);
+  let keysHtmlList = '';
+  let keysTextList = '';
+
+  if (excessiveKeys.length > 0) {
+    keysTextList = excessiveKeys.map(kd => {
+      return `Key: ${maskKey(kd.key)}\nAccount ID: ${kd.account_id}\nEmail: ${kd.email}\nSpend: $${kd.monthly_used.toFixed(4)} USD\nLimit: $${kd.monthly_limit.toFixed(2)} USD\nLast Checked: ${kd.last_checked}\n----------------------`;
+    }).join('\n\n');
+
+    keysHtmlList = excessiveKeys.map(kd => {
+      return `
+      <div style="border: 1px solid #ffccd5; background-color: #fff8f8; padding: 15px; margin-bottom: 15px; border-radius: 6px;">
+        <h4 style="margin: 0 0 10px 0; color: #ef4444;">Key: ${maskKey(kd.key)}</h4>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr><td style="padding: 4px 0; font-weight: bold; color: #555; width: 120px;">Account ID:</td><td style="padding: 4px 0; color: #333;">${kd.account_id}</td></tr>
+          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Email:</td><td style="padding: 4px 0; color: #333;">${kd.email}</td></tr>
+          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Spend:</td><td style="padding: 4px 0; font-size: 16px; color: #ef4444; font-weight: bold;">$${kd.monthly_used.toFixed(4)} USD</td></tr>
+          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Account Limit:</td><td style="padding: 4px 0; color: #333;">$${kd.monthly_limit.toFixed(2)} USD</td></tr>
+          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Last Checked:</td><td style="padding: 4px 0; color: #666; font-size: 13px;">${kd.last_checked}</td></tr>
+        </table>
+      </div>
+      `;
+    }).join('');
+  } else {
+    keysTextList = 'No single key exceeded the individual threshold, but cumulative/aggregate spend of all keys triggered the system suspend.';
+    keysHtmlList = `<p style="color: #666;">No single key exceeded the individual threshold, but cumulative/aggregate spend of all keys triggered the system suspend.</p>`;
+  }
+
   const mailOptions = {
     from: smtpUser || '"Fireworks Proxy Monitoring" <tokendance_agent@qq.com>',
     to: notificationEmail,
     subject: '🚨 Fireworks API Proxy Suspended - Monthly Spend Limit Exceeded',
-    text: `Notice: The Fireworks API Proxy has automatically suspended key usage because the detected monthly spend of $${spend.toFixed(4)} exceeded the threshold of $${maxAllowedSpend.toFixed(2)} USD.\n\nTime of detection: ${new Date().toLocaleString()}`,
+    text: `Notice: The Fireworks API Proxy has automatically suspended key usage because the monthly spend exceeded the threshold of $${maxAllowedSpend.toFixed(2)} USD.\n\nTime of detection: ${new Date().toLocaleString()}\n\nExcessive Spend Keys Details:\n\n${keysTextList}`,
     html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #ffccd5; background-color: #fff5f5; border-radius: 8px;">
       <h2 style="color: #ef4444; margin-top: 0;">🚨 Monthly Spend Limit Exceeded</h2>
-      <p style="font-size: 16px; color: #333;">The Fireworks API Proxy has automatically suspended key usage.</p>
-      <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-        <tr>
-          <td style="padding: 8px 0; font-weight: bold; color: #666;">Current Monthly Spend:</td>
-          <td style="padding: 8px 0; font-size: 18px; color: #ef4444; font-weight: bold;">$${spend.toFixed(4)} USD</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; font-weight: bold; color: #666;">Configured Limit:</td>
-          <td style="padding: 8px 0; font-size: 16px; font-weight: bold;">$${maxAllowedSpend.toFixed(2)} USD</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; font-weight: bold; color: #666;">Action taken:</td>
-          <td style="padding: 8px 0; color: #ef4444; font-weight: bold;">All API Key proxying suspended</td>
-        </tr>
-      </table>
+      <p style="font-size: 16px; color: #333;">The Fireworks API Proxy has automatically suspended key usage because the system limit of <strong>$${maxAllowedSpend.toFixed(2)} USD</strong> has been reached.</p>
+      
+      <h3 style="color: #333; margin-top: 20px; border-bottom: 2px solid #ef4444; padding-bottom: 5px;">Excessive Spend Keys (Spend >= $${maxAllowedSpend.toFixed(2)} USD):</h3>
+      <div style="margin-top: 15px;">
+        ${keysHtmlList}
+      </div>
+
       <p style="font-size: 14px; color: #666; border-top: 1px solid #ddd; padding-top: 10px; margin-top: 20px;">This check runs automatically every 5 minutes.</p>
     </div>`
   };
