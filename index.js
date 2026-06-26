@@ -234,27 +234,33 @@ async function fetchAccountsAndSpend() {
     try {
       const resVerify = await fetch('https://api.fireworks.ai/v1/accounts', verifyOptions);
       if (resVerify.status === 200) {
-        const accountData = await resVerify.json();
-        const accountId = accountData[0]?.id;
-        if (accountId) {
-          kd.account_id = accountId;
-          kd.display_name = accountData[0]?.displayName || 'Fireworks User';
-          kd.email = accountData[0]?.email || '';
+        const responseData = await resVerify.json();
+        const accountInfo = responseData.accounts?.[0];
+        if (accountInfo) {
+          // Extract actual account ID from "accounts/xxx" format
+          const rawName = accountInfo.name || '';
+          const accountId = rawName.split('/').pop() || '';
+          
+          if (accountId) {
+            kd.account_id = accountId;
+            kd.display_name = accountInfo.displayName || 'Fireworks User';
+            kd.email = accountInfo.email || '';
 
-          const quotaRes = await fetch(`https://api.fireworks.ai/v1/accounts/${accountId}/quotas/monthly-spend-usd`, verifyOptions);
-          if (quotaRes.status === 200) {
-            const quotaData = await quotaRes.json();
-            const usage = parseFloat(quotaData.usage || '0');
-            const limit = parseFloat(quotaData.value || '0');
-            
-            kd.monthly_used = usage;
-            kd.monthly_limit = limit;
-            kd.monthly_remaining = Math.max(0, limit - usage);
-            kd.status = 'Active';
-            kd.last_checked = new Date().toISOString();
+            const quotaRes = await fetch(`https://api.fireworks.ai/v1/accounts/${accountId}/quotas/monthly-spend-usd`, verifyOptions);
+            if (quotaRes.status === 200) {
+              const quotaData = await quotaRes.json();
+              const usage = parseFloat(quotaData.usage || '0');
+              const limit = parseFloat(quotaData.value || '0');
+              
+              kd.monthly_used = usage;
+              kd.monthly_limit = limit;
+              kd.monthly_remaining = Math.max(0, limit - usage);
+              kd.status = 'Active';
+              kd.last_checked = new Date().toISOString();
 
-            totalUsage += usage;
-            hasValidCheck = true;
+              totalUsage += usage;
+              hasValidCheck = true;
+            }
           }
         }
       } else {

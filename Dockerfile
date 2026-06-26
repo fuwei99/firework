@@ -10,7 +10,7 @@ COPY package*.json ./
 RUN npm install --production
 
 # Copy app files
-COPY index.js dashboard.html start.sh keys.json ./
+COPY index.js dashboard.html start.sh ./
 
 # Make start.sh executable
 RUN chmod +x start.sh
