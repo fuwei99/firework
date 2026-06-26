@@ -1,0 +1,16 @@
+{
+  "glm-5.2": "accounts/fireworks/models/glm-5p2",
+  "kimi-k2.7-code": "accounts/fireworks/models/kimi-k2p7-code",
+  "minimax-m3": "accounts/fireworks/models/minimax-m3",
+  "qwen-3.7-plus": "accounts/fireworks/models/qwen3p7-plus",
+  "deepseek-v4-pro": "accounts/fireworks/models/deepseek-v4-pro",
+  "kimi-k2.6": "accounts/fireworks/models/kimi-k2p6",
+  "minimax-m2.7": "accounts/fireworks/models/minimax-m2p7",
+  "deepseek-v4-flash": "accounts/fireworks/models/deepseek-v4-flash",
+  "gpt-oss-120b": "accounts/fireworks/models/gpt-oss-120b",
+  "gpt-oss-20b": "accounts/fireworks/models/gpt-oss-20b",
+  "qwen3-embedding-8b": "accounts/fireworks/models/qwen3-embedding-8b",
+  "qwen3-reranker-8b": "accounts/fireworks/models/qwen3-reranker-8b",
+  "glm-5.1": "accounts/fireworks/models/glm-5p1",
+  "nemotron-3-ultra-nvfp4": "accounts/fireworks/models/nemotron-3-ultra-nvfp4"
+}

@@ -1,0 +1,10 @@
+node_modules/
+.env
+*.log
+.DS_Store
+config.json
+config.json.example
+reference/
+keys.json
+keys.json.example
+README.md
