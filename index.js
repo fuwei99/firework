@@ -599,7 +599,13 @@ async function handleProxyRequest(req, res, requestId) {
       headers['content-length'] = bodyBuffer.length.toString();
     }
     
-    const targetUrl = `${TARGET_HOST}${req.url}`;
+    // Fireworks 官方 API 路径在 /v1 前需要加 /inference 前缀
+    // 例如：/v1/chat/completions -> /inference/v1/chat/completions
+    // 但模型列表 /v1/models 在官方是 /v1/models（已在 HTTP 路由层直返，无需转发）
+    const proxiedPath = req.url.startsWith('/inference/') || req.url === '/v1/models' || req.url.startsWith('/v1/models?')
+      ? req.url
+      : `/inference${req.url.startsWith('/') ? req.url : `/${req.url}`}`;
+    const targetUrl = `${TARGET_HOST}${proxiedPath}`;
     const dispatcher = getProxyDispatcher(proxyUrl);
     
     try {
