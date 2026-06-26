@@ -279,12 +279,12 @@ async function fetchAccountsAndSpend() {
     currentSpendUsage = totalUsage;
     console.log(`[Spend Check] Aggregate spend usage of all keys: $${totalUsage.toFixed(4)} USD (Limit: $${maxAllowedSpend.toFixed(2)} USD)`);
 
-    // Detect keys that have newly exceeded 5.5 USD (maxAllowedSpend)
+    // Detect keys that have newly exceeded maxAllowedSpend (dynamically loaded from config)
     for (const kd of keysDetail) {
       if (kd.monthly_used >= maxAllowedSpend) {
         if (!notifiedKeys.has(kd.key)) {
           notifiedKeys.add(kd.key);
-          console.log(`[Spend Check] Key ${maskKey(kd.key)} newly exceeded the threshold. Sending notification email.`);
+          console.log(`[Spend Check] Key ${maskKey(kd.key)} newly exceeded the threshold ($${maxAllowedSpend}). Sending notification email.`);
           await sendNotificationEmail(kd);
         }
       } else {
@@ -296,15 +296,10 @@ async function fetchAccountsAndSpend() {
     }
 
     if (totalUsage >= maxAllowedSpend) {
-      if (!isSuspended) {
-        isSuspended = true;
-        console.warn(`[Spend Check] Spend limit exceeded. Suspending all API requests!`);
-      }
-    } else {
-      if (isSuspended) {
-        isSuspended = false;
-        console.log(`[Spend Check] Spend usage recovered below threshold. Resuming normal operations.`);
-      }
+      // NOTE: We no longer suspend the entire server (isSuspended = true) 
+      // if totalUsage exceeds maxAllowedSpend, because we want keys to failover 
+      // individually. We only print status or let individual key checks block.
+      console.warn(`[Spend Check] Aggregate spend usage of all keys: $${totalUsage.toFixed(4)} USD (Limit: $${maxAllowedSpend.toFixed(2)} USD).`);
     }
   }
 }
@@ -499,7 +494,7 @@ async function handleProxyRequest(req, res, requestId) {
     return;
   }
 
-  // Check if keys are suspended due to spend limit
+  // Check if keys are suspended due to spend limit (Keep check but it will only trigger if we manually set isSuspended)
   if (isSuspended) {
     res.statusCode = 503;
     res.setHeader('Content-Type', 'application/json');
@@ -578,6 +573,15 @@ async function handleProxyRequest(req, res, requestId) {
     const selectedKey = keys[keyIndex];
     if (!selectedKey) {
       currentIndex = 0;
+      attempts++;
+      continue;
+    }
+
+    // Check if the current key has exceeded maxAllowedSpend
+    const keyDetail = keysDetail.find(kd => kd.key === selectedKey);
+    if (keyDetail && keyDetail.monthly_used >= maxAllowedSpend) {
+      console.warn(`[${requestId}] Key [${keyIndex + 1}] has exceeded maxAllowedSpend ($${keyDetail.monthly_used.toFixed(4)} >= $${maxAllowedSpend.toFixed(2)}). Switching key...`);
+      currentIndex = (currentIndex + 1) % keys.length;
       attempts++;
       continue;
     }
