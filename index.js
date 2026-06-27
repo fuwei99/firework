@@ -49,7 +49,7 @@ let PORT = configData.PORT || 7860;
 let clientPassword = configData.PASSWORD || '';
 
 // Outbound Proxy
-let proxyUrl = configData.OUTBOUND_PROXY || '';
+let proxyUrl = configData.OUTBOUND_PROXY || process.env.PROXY_URL || '';
 
 // Rotation mode: round-robin or exhaustion
 let mode = configData.KEY_MODE || 'round-robin';
@@ -290,24 +290,41 @@ async function fetchAccountsAndSpend() {
                 console.error(`[Spend Check] Error retrieving keyId mapping for ${maskKey(kd.key)}:`, keyErr.message);
               }
 
-              let calculatedSpend = 0;
+              // Aggregate billingUsage (filtered to this key) by model. billingUsage
+              // returns per-day buckets; we sum per model to match the monthly
+              // usage_accumulator window.
+              const modelAgg = {};
               for (const costItem of serverlessCosts) {
                 // If we successfully matched the keyId, filter by it.
                 // Otherwise, fall back to checking if the item belongs to this account (since this is a single-key account usually, but filtering is safer).
                 if (targetKeyId && costItem.apiKeyId !== targetKeyId) {
-                  continue; 
+                  continue;
                 }
-
                 const model = costItem.modelName || (costItem.group && costItem.group.model_name) || '';
-                const promptTokens = parseInt(costItem.promptTokens || '0', 10);
-                const completionTokens = parseInt(costItem.completionTokens || '0', 10);
-                const cachedTokens = 0; // billingUsage does not separate cached tokens in response directly, we calculate with standard rate
-
-                const itemCost = estimateCost(model, promptTokens, completionTokens, cachedTokens, false);
-                calculatedSpend += itemCost;
+                if (!model) continue;
+                if (!modelAgg[model]) modelAgg[model] = { promptTokens: 0, completionTokens: 0 };
+                modelAgg[model].promptTokens += parseInt(costItem.promptTokens || '0', 10);
+                modelAgg[model].completionTokens += parseInt(costItem.completionTokens || '0', 10);
               }
 
-              kd.total_used = parseFloat(calculatedSpend.toFixed(6));
+              // billingUsage does NOT expose cached tokens: it returns the TOTAL
+              // prompt tokens (cached + uncached merged). We subtract the real
+              // cached_tokens we recorded per request (usage_accumulator, same
+              // monthly window) and charge the remainder at the full input rate,
+              // the cached portion at the discounted cached rate.
+              const accMonthKey = getAccumulatorMonthKey();
+              const accForMonth = (kd.usage_accumulator && kd.usage_accumulator[accMonthKey]) || {};
+
+              let calculatedSpend = 0;
+              for (const [model, agg] of Object.entries(modelAgg)) {
+                const cachedFromAcc = (accForMonth[model] && accForMonth[model].cached_tokens) || 0;
+                // Cap so the recorded cached count can never exceed what was billed.
+                const applicableCached = Math.min(cachedFromAcc, agg.promptTokens);
+                // estimateCost splits internally: (prompt-cached)*full + cached*discount
+                calculatedSpend += estimateCost(model, agg.promptTokens, agg.completionTokens, applicableCached, false);
+              }
+
+              kd.total_used = parseFloat(Math.max(0, calculatedSpend).toFixed(6));
               kd.total_remaining = Math.max(0, 6.0 - kd.total_used);
               kd.status = 'Active';
               kd.last_checked = new Date().toISOString();
@@ -364,32 +381,35 @@ setInterval(fetchAccountsAndSpend, 5 * 60 * 1000);
 setTimeout(fetchAccountsAndSpend, 5000);
 
 /**
- * Estimate cost for Fireworks AI models based on models.json pricing metadata
- * Returns price per 1M tokens or custom rates for text/vision models
+ * Resolve per-1M-token pricing (input / cached input / output) for a model.
+ * Reads models.json at runtime, with param-size / MoE fallbacks.
+ * isPriority multiplies all rates by 1.5 (Standard path otherwise).
  */
-function estimateCost(model, promptTokens, completionTokens, cachedTokens = 0, isPriority = false) {
-  if (!model) return 0;
-  const modelLower = model.toLowerCase();
-
+function getModelRates(model, isPriority = false) {
   let inputRate = 0.90;
   let cachedRate = null;
   let outputRate = 0.90;
 
+  if (!model) {
+    if (cachedRate === null) cachedRate = inputRate * 0.5;
+    return { inputRate, cachedRate, outputRate };
+  }
+
+  const modelLower = model.toLowerCase();
+
   try {
-    // Try to locate the model in models.json (loaded from MODELS_PATH)
     if (fs.existsSync(MODELS_PATH)) {
       const parsedModels = JSON.parse(fs.readFileSync(MODELS_PATH, 'utf8'));
       let foundConfig = null;
 
-      // Match by exact key or clean key or target id
       const cleanModel = modelLower.replace(/^accounts\/fireworks\/models\//, '').replace(/^fireworks\//, '');
-      
+
       for (const [beautifulId, config] of Object.entries(parsedModels)) {
         if (config && typeof config === 'object') {
           const configId = (config.id || '').toLowerCase();
           if (
-            beautifulId.toLowerCase() === cleanModel || 
-            configId.includes(modelLower) || 
+            beautifulId.toLowerCase() === cleanModel ||
+            configId.includes(modelLower) ||
             modelLower.includes(configId) ||
             (configId && cleanModel.includes(configId.replace(/^accounts\/fireworks\/models\//, '').replace(/^fireworks\//, '')))
           ) {
@@ -403,15 +423,13 @@ function estimateCost(model, promptTokens, completionTokens, cachedTokens = 0, i
         inputRate = typeof foundConfig.input_price === 'number' ? foundConfig.input_price : inputRate;
         cachedRate = typeof foundConfig.cached_input_price === 'number' ? foundConfig.cached_input_price : cachedRate;
         outputRate = typeof foundConfig.output_price === 'number' ? foundConfig.output_price : outputRate;
-        
-        // Handle priority multiplier if applicable
+
         if (isPriority) {
           inputRate *= 1.5;
           if (cachedRate !== null) cachedRate *= 1.5;
           outputRate *= 1.5;
         }
       } else {
-        // Fallbacks for general models
         if (modelLower.includes('moe')) {
           if (modelLower.includes('8x7b')) {
             inputRate = 0.50;
@@ -446,13 +464,84 @@ function estimateCost(model, promptTokens, completionTokens, cachedTokens = 0, i
     cachedRate = inputRate * 0.5;
   }
 
+  return { inputRate, cachedRate, outputRate };
+}
+
+/**
+ * Estimate cost for Fireworks AI models based on models.json pricing metadata
+ * Returns price per 1M tokens or custom rates for text/vision models
+ */
+function estimateCost(model, promptTokens, completionTokens, cachedTokens = 0, isPriority = false) {
+  if (!model) return 0;
+  const { inputRate, cachedRate, outputRate } = getModelRates(model, isPriority);
   const uncachedTokens = Math.max(0, promptTokens - cachedTokens);
   const cost = (uncachedTokens * inputRate + cachedTokens * cachedRate + completionTokens * outputRate) / 1000000;
   return parseFloat(cost.toFixed(6));
 }
 
+/**
+ * --- Cached-token usage accumulator ---
+ * billingUsage reports aggregate prompt tokens (cached + uncached merged) and
+ * exposes NO cached-token breakdown, so the spend check overestimates cost by
+ * billing every prompt token at the full input rate. To correct this, we
+ * accumulate the real cached_tokens (captured per response) keyed by month +
+ * official model id, persisted into keys.json under `usage_accumulator`.
+ * The spend check then subtracts the cached-token discount from the
+ * billingUsage-derived cost. The month key aligns with billingUsage's
+ * startTime (beginning of current UTC month) window.
+ */
+function getAccumulatorMonthKey(date = new Date()) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// Normalize a request model id (may be a beautiful id or already-official id)
+// to the official Fireworks model id so it matches billingUsage.modelName.
+function normalizeToOfficialModelId(model) {
+  if (!model) return '';
+  if (model.includes('accounts/fireworks/models/')) return model;
+  const cleanKey = model.replace(/^accounts\/fireworks\/models\//, '').replace(/^fireworks\//, '');
+  if (modelsMap[cleanKey]) return modelsMap[cleanKey];
+  return model;
+}
+
+// Debounced keys.json flush so high-frequency requests don't hammer disk.
+let keysSaveTimer = null;
+function scheduleKeysSave() {
+  if (keysSaveTimer) return;
+  keysSaveTimer = setTimeout(() => {
+    keysSaveTimer = null;
+    saveKeysDetail();
+  }, 10000);
+}
+
+// Accumulate per-request token usage into the matching key's monthly bucket.
+function accumulateUsageForKey(selectedKey, model, promptTokens, completionTokens, cachedTokens) {
+  if (!selectedKey || !promptTokens) return;
+  const kd = keysDetail.find(k => k.key === selectedKey);
+  if (!kd) return;
+  if (!kd.usage_accumulator || typeof kd.usage_accumulator !== 'object') kd.usage_accumulator = {};
+  const monthKey = getAccumulatorMonthKey();
+  if (!kd.usage_accumulator[monthKey]) kd.usage_accumulator[monthKey] = {};
+  const officialModel = normalizeToOfficialModelId(model);
+  if (!kd.usage_accumulator[monthKey][officialModel]) {
+    kd.usage_accumulator[monthKey][officialModel] = {
+      prompt_tokens: 0, cached_tokens: 0, completion_tokens: 0, requests: 0
+    };
+  }
+  const entry = kd.usage_accumulator[monthKey][officialModel];
+  entry.prompt_tokens += promptTokens;
+  entry.completion_tokens += completionTokens || 0;
+  entry.cached_tokens += cachedTokens || 0;
+  entry.requests += 1;
+  scheduleKeysSave();
+}
+
 function addRequestLog(log) {
   log.cost = estimateCost(log.model, log.prompt_tokens, log.completion_tokens, log.cached_tokens, log.isPriority);
+  // Accumulate real cached tokens (from response usage) for spend correction.
+  accumulateUsageForKey(log.selectedKey, log.model, log.prompt_tokens, log.completion_tokens, log.cached_tokens);
+  // Never expose the real API key via the /api/logs endpoint.
+  if (log.selectedKey !== undefined) delete log.selectedKey;
   requestLogs.unshift(log);
   if (requestLogs.length > MAX_LOGS) {
     requestLogs.pop();
@@ -602,8 +691,16 @@ async function handleProxyRequest(req, res, requestId) {
     console.log(`[${requestId}] Attempt ${attempts + 1} | Using Key [${keyIndex + 1}/${keys.length}]: ${maskedKey} | Mode: ${mode}`);
     
     const headers = {};
+    // Hop-by-hop / undici-unsupported headers must NOT be forwarded upstream.
+    // - expect: undici fetch throws UND_ERR_NOT_SUPPORTED on "100-continue"
+    // - connection/keep-alive/transfer-encoding/upgrade/etc. are hop-by-hop
+    const stripHeaders = new Set([
+      'host', 'expect', 'connection', 'keep-alive', 'transfer-encoding',
+      'upgrade', 'proxy-connection', 'proxy-authenticate', 'proxy-authorization',
+      'te', 'trailer'
+    ]);
     for (const [name, value] of Object.entries(req.headers)) {
-      if (name.toLowerCase() === 'host') continue;
+      if (stripHeaders.has(name.toLowerCase())) continue;
       headers[name] = value;
     }
     headers['authorization'] = `Bearer ${selectedKey}`;
@@ -735,6 +832,7 @@ async function handleProxyRequest(req, res, requestId) {
             duration,
             keyIndex: keyIndex + 1,
             maskedKey,
+            selectedKey,
             isPriority
           });
         });
@@ -765,6 +863,7 @@ async function handleProxyRequest(req, res, requestId) {
           duration,
           keyIndex: keyIndex + 1,
           maskedKey,
+          selectedKey,
           isPriority
         });
       }
@@ -931,7 +1030,8 @@ const server = http.createServer(async (req, res) => {
             total_used: 0.0,
             total_remaining: 6.0,
             status: 'Pending Verification',
-            last_checked: ''
+            last_checked: '',
+            usage_accumulator: {}
           };
         });
         keys = incomingKeys;
