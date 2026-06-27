@@ -77,6 +77,18 @@ function loadKeysDetail() {
   try {
     if (fs.existsSync(KEYS_PATH)) {
       keysDetail = JSON.parse(fs.readFileSync(KEYS_PATH, 'utf8'));
+      // Migrate away deprecated monthly_* fields (Fireworks uses a lifetime $6
+      // hard limit, not a monthly resettable quota). Strip on load.
+      let changed = false;
+      for (const kd of keysDetail) {
+        if ('monthly_limit' in kd || 'monthly_used' in kd || 'monthly_remaining' in kd) {
+          delete kd.monthly_limit;
+          delete kd.monthly_used;
+          delete kd.monthly_remaining;
+          changed = true;
+        }
+      }
+      if (changed) saveKeysDetail();
     } else {
       keysDetail = [];
     }
