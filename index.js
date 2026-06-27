@@ -4,10 +4,12 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { ProxyAgent } from 'undici';
 import nodemailer from 'nodemailer';
+import pg from 'pg';
 
-const CONFIG_PATH = path.resolve('config.json');
-const KEYS_PATH = path.resolve('keys.json');
 const MODELS_PATH = path.resolve('models.json');
+const connectionString = process.env.DATABASE_URL || 'postgresql://postgres.uyuopmexlkwrlsrjxcum:kNHH8GW2OHVczVic@aws-1-us-east-2.pooler.supabase.com:5432/postgres';
+
+const pool = new pg.Pool({ connectionString });
 
 // Load models mapping config
 let modelsMap = {};
@@ -15,8 +17,6 @@ function loadModelsMap() {
   try {
     if (fs.existsSync(MODELS_PATH)) {
       const parsed = JSON.parse(fs.readFileSync(MODELS_PATH, 'utf8'));
-      // Transform new object style into old simple string map style for compatibility, 
-      // while keeping the rich object config accessible.
       modelsMap = {};
       for (const [beautifulId, value] of Object.entries(parsed)) {
         if (value && typeof value === 'object' && value.id) {
@@ -32,108 +32,204 @@ function loadModelsMap() {
 }
 loadModelsMap();
 
-// Memory store for config parameters loaded from config.json
-let configData = {};
-try {
-  if (fs.existsSync(CONFIG_PATH)) {
-    configData = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-  }
-} catch (e) {
-  console.error('[Config] Failed to parse config.json, using defaults:', e.message);
-}
-
-let TARGET_HOST = configData.TARGET_HOST || 'https://api.fireworks.ai';
-let PORT = configData.PORT || 7860;
-
-// Client authentication password
-let clientPassword = configData.PASSWORD || '';
-
-// Outbound Proxy
-let proxyUrl = configData.OUTBOUND_PROXY || process.env.PROXY_URL || '';
-
-// Rotation mode: round-robin or exhaustion
-let mode = configData.KEY_MODE || 'round-robin';
-
-// Running key tracker index
-let currentIndex = 0;
-
-// Spend Monitoring State
+// Global config variables loaded from DB
+let TARGET_HOST = 'https://api.fireworks.ai';
+let PORT = 7860;
+let clientPassword = 'wei123';
+let proxyUrl = '';
+let mode = 'exhaustion';
 let isSuspended = false;
 let currentSpendUsage = 0;
-let maxAllowedSpend = typeof configData.MAX_ALLOWED_SPEND === 'number' ? configData.MAX_ALLOWED_SPEND : 5.5;
+let maxAllowedSpend = 5.5;
 let emailSentStatus = false;
-let notificationEmail = configData.NOTIFICATION_EMAIL || '';
+let notificationEmail = '2607790564@qq.com';
+let smtpHost = 'smtp.qq.com';
+let smtpPort = 465;
+let smtpSecure = true;
+let smtpUser = '2607790564@qq.com';
+let smtpPass = '';
 
-// SMTP credentials
-let smtpHost = configData.SMTP_HOST || '';
-let smtpPort = parseInt(configData.SMTP_PORT || '465', 10);
-let smtpSecure = configData.SMTP_SECURE !== false;
-let smtpUser = configData.SMTP_USER || '';
-let smtpPass = configData.SMTP_PASS || '';
-
-// Load detailed key status from keys.json
+// In-memory key states loaded from DB
 let keysDetail = [];
-function loadKeysDetail() {
+let keys = [];
+let currentIndex = 0;
+
+// Load config from Supabase
+async function loadConfigFromDB() {
   try {
-    if (fs.existsSync(KEYS_PATH)) {
-      keysDetail = JSON.parse(fs.readFileSync(KEYS_PATH, 'utf8'));
-      // Migrate away deprecated monthly_* fields (Fireworks uses a lifetime $6
-      // hard limit, not a monthly resettable quota). Strip on load.
-      let changed = false;
-      for (const kd of keysDetail) {
-        if ('monthly_limit' in kd || 'monthly_used' in kd || 'monthly_remaining' in kd) {
-          delete kd.monthly_limit;
-          delete kd.monthly_used;
-          delete kd.monthly_remaining;
-          changed = true;
-        }
-      }
-      if (changed) saveKeysDetail();
+    const res = await pool.query('SELECT * FROM fw_configs WHERE id = $1', ['default']);
+    if (res.rows.length === 0) {
+      // Initialize DB with default config
+      await pool.query(`
+        INSERT INTO fw_configs (id, target_host, port, password, outbound_proxy, key_mode, notification_email, max_allowed_spend, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `, ['default', TARGET_HOST, PORT, clientPassword, proxyUrl, mode, notificationEmail, maxAllowedSpend, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPass]);
+      console.log('[Config] Initialized default configuration in database.');
     } else {
-      keysDetail = [];
+      const row = res.rows[0];
+      TARGET_HOST = row.target_host;
+      PORT = row.port;
+      clientPassword = row.password;
+      proxyUrl = row.outbound_proxy;
+      mode = row.key_mode;
+      notificationEmail = row.notification_email;
+      maxAllowedSpend = parseFloat(row.max_allowed_spend);
+      smtpHost = row.smtp_host;
+      smtpPort = row.smtp_port;
+      smtpSecure = row.smtp_secure;
+      smtpUser = row.smtp_user;
+      smtpPass = row.smtp_pass || '';
     }
-  } catch (e) {
-    console.error('[Keys] Failed to parse keys.json:', e.message);
-    keysDetail = [];
-  }
-}
-loadKeysDetail();
-
-// Dynamic keys array for rotation
-let keys = keysDetail.map(kd => kd.key).filter(Boolean);
-
-// Save keys back to keys.json
-function saveKeysDetail() {
-  try {
-    fs.writeFileSync(KEYS_PATH, JSON.stringify(keysDetail, null, 2), 'utf8');
   } catch (err) {
-    console.error('[Keys] Failed to save keys.json:', err.message);
+    console.error('[Config] Failed to load config from DB, using memory defaults:', err.message);
   }
 }
 
-// Helper to save configurations to config.json (keys synced separately now)
-function saveConfigToFile() {
+// Load keys from Supabase
+async function loadKeysFromDB() {
   try {
-    const configContent = {
-      TARGET_HOST,
-      PORT: parseInt(PORT, 10),
-      PASSWORD: clientPassword,
-      OUTBOUND_PROXY: proxyUrl,
-      KEY_MODE: mode,
-      NOTIFICATION_EMAIL: notificationEmail,
-      MAX_ALLOWED_SPEND: maxAllowedSpend,
-      SMTP_HOST: smtpHost,
-      SMTP_PORT: smtpPort,
-      SMTP_SECURE: smtpSecure,
-      SMTP_USER: smtpUser,
-      SMTP_PASS: smtpPass
-    };
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(configContent, null, 2), 'utf8');
-    console.log(`[Config] Config written to config.json for persistence.`);
+    const res = await pool.query('SELECT * FROM fw_keys ORDER BY created_at ASC');
+    keysDetail = res.rows.map(row => ({
+      key: row.key,
+      account_id: row.account_id || '',
+      display_name: row.display_name || 'Fireworks User',
+      email: row.email || '',
+      status: row.status || 'Active',
+      last_checked: row.last_checked ? row.last_checked.toISOString() : '',
+      total_used: parseFloat(row.total_used || 0),
+      total_remaining: parseFloat(row.total_remaining || 6.0),
+      usage_accumulator: row.usage_accumulator || {}
+    }));
+    keys = keysDetail.map(kd => kd.key).filter(Boolean);
+    console.log(`[Keys] Loaded ${keys.length} key(s) from database.`);
   } catch (err) {
-    console.error(`[Config] Failed to save config to config.json:`, err.message);
+    console.error('[Keys] Failed to load keys from DB:', err.message);
   }
 }
+
+// Save config to Supabase
+async function saveConfigToDB() {
+  try {
+    await pool.query(`
+      INSERT INTO fw_configs (id, target_host, port, password, outbound_proxy, key_mode, notification_email, max_allowed_spend, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        target_host = EXCLUDED.target_host,
+        port = EXCLUDED.port,
+        password = EXCLUDED.password,
+        outbound_proxy = EXCLUDED.outbound_proxy,
+        key_mode = EXCLUDED.key_mode,
+        notification_email = EXCLUDED.notification_email,
+        max_allowed_spend = EXCLUDED.max_allowed_spend,
+        smtp_host = EXCLUDED.smtp_host,
+        smtp_port = EXCLUDED.smtp_port,
+        smtp_secure = EXCLUDED.smtp_secure,
+        smtp_user = EXCLUDED.smtp_user,
+        smtp_pass = EXCLUDED.smtp_pass,
+        updated_at = NOW()
+    `, ['default', TARGET_HOST, PORT, clientPassword, proxyUrl, mode, notificationEmail, maxAllowedSpend, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPass]);
+    console.log('[Config] Configuration persisted to database.');
+  } catch (err) {
+    console.error('[Config] Failed to save config to DB:', err.message);
+  }
+}
+
+// Save single key detail to DB
+async function saveKeyDetailToDB(kd) {
+  try {
+    await pool.query(`
+      INSERT INTO fw_keys (key, account_id, display_name, email, status, last_checked, total_used, total_remaining, usage_accumulator)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (key) DO UPDATE SET
+        account_id = EXCLUDED.account_id,
+        display_name = EXCLUDED.display_name,
+        email = EXCLUDED.email,
+        status = EXCLUDED.status,
+        last_checked = EXCLUDED.last_checked,
+        total_used = EXCLUDED.total_used,
+        total_remaining = EXCLUDED.total_remaining,
+        usage_accumulator = EXCLUDED.usage_accumulator
+    `, [
+      kd.key,
+      kd.account_id,
+      kd.display_name,
+      kd.email,
+      kd.status,
+      kd.last_checked ? new Date(kd.last_checked) : null,
+      kd.total_used,
+      kd.total_remaining,
+      JSON.stringify(kd.usage_accumulator || {})
+    ]);
+  } catch (err) {
+    console.error(`[Keys] Failed to save key ${maskKey(kd.key)} to DB:`, err.message);
+  }
+}
+
+// Save all key details to DB
+async function saveAllKeysDetailToDB() {
+  for (const kd of keysDetail) {
+    await saveKeyDetailToDB(kd);
+  }
+}
+
+// Migration from local json files to database if database is empty
+async function migrateFromJsonToDB() {
+  try {
+    const localConfigPath = path.resolve('config.json');
+    const localKeysPath = path.resolve('keys.json');
+
+    // Migrate Config
+    const configCheck = await pool.query('SELECT 1 FROM fw_configs WHERE id = $1', ['default']);
+    if (configCheck.rows.length === 0 && fs.existsSync(localConfigPath)) {
+      const localConfig = JSON.parse(fs.readFileSync(localConfigPath, 'utf8'));
+      TARGET_HOST = localConfig.TARGET_HOST || TARGET_HOST;
+      PORT = localConfig.PORT || PORT;
+      clientPassword = localConfig.PASSWORD || clientPassword;
+      proxyUrl = localConfig.OUTBOUND_PROXY || proxyUrl;
+      mode = localConfig.KEY_MODE || mode;
+      notificationEmail = localConfig.NOTIFICATION_EMAIL || notificationEmail;
+      maxAllowedSpend = typeof localConfig.MAX_ALLOWED_SPEND === 'number' ? localConfig.MAX_ALLOWED_SPEND : maxAllowedSpend;
+      smtpHost = localConfig.SMTP_HOST || smtpHost;
+      smtpPort = localConfig.SMTP_PORT || smtpPort;
+      smtpSecure = localConfig.SMTP_SECURE !== false;
+      smtpUser = localConfig.SMTP_USER || smtpUser;
+      smtpPass = localConfig.SMTP_PASS || smtpPass;
+      await saveConfigToDB();
+      console.log('[Migration] Migrated local config.json to database.');
+    }
+
+    // Migrate Keys
+    const keysCheck = await pool.query('SELECT 1 FROM fw_keys LIMIT 1');
+    if (keysCheck.rows.length === 0 && fs.existsSync(localKeysPath)) {
+      const localKeys = JSON.parse(fs.readFileSync(localKeysPath, 'utf8'));
+      for (const lk of localKeys) {
+        const kd = {
+          key: lk.key,
+          account_id: lk.account_id || '',
+          display_name: lk.display_name || 'Fireworks User',
+          email: lk.email || '',
+          status: lk.status || 'Active',
+          last_checked: lk.last_checked || '',
+          total_used: parseFloat(lk.total_used || 0),
+          total_remaining: parseFloat(lk.total_remaining || 6.0),
+          usage_accumulator: lk.usage_accumulator || {}
+        };
+        await saveKeyDetailToDB(kd);
+      }
+      console.log('[Migration] Migrated local keys.json to database.');
+    }
+  } catch (err) {
+    console.error('[Migration] Failed migrating local files to DB:', err.message);
+  }
+}
+
+// Initial DB configuration and load
+async function initDB() {
+  await loadConfigFromDB();
+  await migrateFromJsonToDB();
+  await loadKeysFromDB();
+}
+await initDB();
 
 /**
  * Mask key for logging purposes.
@@ -143,17 +239,11 @@ function maskKey(key) {
   return `${key.slice(0, 6)}...${key.slice(-5)}`;
 }
 
-console.log(`[Init] Loaded ${keys.length} Fireworks API key(s) from keys.json.`);
-keys.forEach((k, idx) => {
-  console.log(`  Key [${idx + 1}]: ${maskKey(k)}`);
-});
-
 // Request logs memory store (capped at 200 items)
 const requestLogs = [];
 const MAX_LOGS = 200;
 
 // Track which keys have already sent out alert emails so we don't spam.
-// We only notify when a key goes over maxAllowedSpend for the first time.
 const notifiedKeys = new Set();
 
 // Notification and Suspend check functions
@@ -173,10 +263,6 @@ async function sendNotificationEmail(newlyExcessiveKey) {
     }
   });
 
-  // Filter out all currently suspended keys (spend >= maxAllowedSpend)
-  const currentlySuspendedKeys = keysDetail.filter(kd => kd.total_used >= maxAllowedSpend);
-  
-  // Format for the currently triggered key
   const triggeredKeyInfo = `Key: ${maskKey(newlyExcessiveKey.key)}\nAccount ID: ${newlyExcessiveKey.account_id}\nEmail: ${newlyExcessiveKey.email}\nSpend: $${newlyExcessiveKey.total_used.toFixed(4)} USD\nLast Checked: ${newlyExcessiveKey.last_checked}`;
 
   const suspendedKeys = keysDetail.filter(kd => kd.total_used >= maxAllowedSpend);
@@ -245,7 +331,6 @@ async function fetchAccountsAndSpend() {
   let totalUsage = 0;
   let hasValidCheck = false;
 
-  // Calculate startTime (beginning of current month in UTC)
   const now = new Date();
   const startTime = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const endTime = now.toISOString();
@@ -274,7 +359,6 @@ async function fetchAccountsAndSpend() {
             kd.display_name = accountInfo.displayName || 'Fireworks User';
             kd.email = accountInfo.email || '';
 
-            // Query serverless billingUsage for this account
             const billingUrl = `https://api.fireworks.ai/v1/accounts/${accountId}/billingUsage?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}&usageType=SERVERLESS&groupBy=api_key_id&groupBy=api_key_name&groupBy=model_name`;
             const billingRes = await fetch(billingUrl, verifyOptions);
             
@@ -282,13 +366,9 @@ async function fetchAccountsAndSpend() {
               const billingData = await billingRes.json();
               const serverlessCosts = billingData.serverlessCosts || [];
               
-              // Filter costs to only include usage from THIS specific key.
-              // We match by key prefix or find the keyId from the API.
-              // Let's list the API keys first or match the key prefix.
               let targetKeyId = null;
               try {
-                // Fetch the list of API keys for this user to match keyId
-                const userId = accountId; // Fireworks usually has user_id same as account_id or we can list users
+                const userId = accountId;
                 const keysListUrl = `https://api.fireworks.ai/v1/accounts/${accountId}/users/${userId}/apiKeys`;
                 const keysListRes = await fetch(keysListUrl, verifyOptions);
                 if (keysListRes.status === 200) {
@@ -302,13 +382,8 @@ async function fetchAccountsAndSpend() {
                 console.error(`[Spend Check] Error retrieving keyId mapping for ${maskKey(kd.key)}:`, keyErr.message);
               }
 
-              // Aggregate billingUsage (filtered to this key) by model. billingUsage
-              // returns per-day buckets; we sum per model to match the monthly
-              // usage_accumulator window.
               const modelAgg = {};
               for (const costItem of serverlessCosts) {
-                // If we successfully matched the keyId, filter by it.
-                // Otherwise, fall back to checking if the item belongs to this account (since this is a single-key account usually, but filtering is safer).
                 if (targetKeyId && costItem.apiKeyId !== targetKeyId) {
                   continue;
                 }
@@ -319,20 +394,13 @@ async function fetchAccountsAndSpend() {
                 modelAgg[model].completionTokens += parseInt(costItem.completionTokens || '0', 10);
               }
 
-              // billingUsage does NOT expose cached tokens: it returns the TOTAL
-              // prompt tokens (cached + uncached merged). We subtract the real
-              // cached_tokens we recorded per request (usage_accumulator, same
-              // monthly window) and charge the remainder at the full input rate,
-              // the cached portion at the discounted cached rate.
               const accMonthKey = getAccumulatorMonthKey();
               const accForMonth = (kd.usage_accumulator && kd.usage_accumulator[accMonthKey]) || {};
 
               let calculatedSpend = 0;
               for (const [model, agg] of Object.entries(modelAgg)) {
                 const cachedFromAcc = (accForMonth[model] && accForMonth[model].cached_tokens) || 0;
-                // Cap so the recorded cached count can never exceed what was billed.
                 const applicableCached = Math.min(cachedFromAcc, agg.promptTokens);
-                // estimateCost splits internally: (prompt-cached)*full + cached*discount
                 calculatedSpend += estimateCost(model, agg.promptTokens, agg.completionTokens, applicableCached, false);
               }
 
@@ -359,13 +427,12 @@ async function fetchAccountsAndSpend() {
     }
   }
 
-  saveKeysDetail();
+  await saveAllKeysDetailToDB();
 
   if (hasValidCheck) {
     currentSpendUsage = totalUsage;
     console.log(`[Spend Check] Aggregate spend usage of all keys: $${totalUsage.toFixed(4)} USD (Limit: $${maxAllowedSpend.toFixed(2)} USD)`);
 
-    // Detect keys that have newly exceeded maxAllowedSpend (dynamically loaded from config)
     for (const kd of keysDetail) {
       if (kd.total_used >= maxAllowedSpend) {
         if (!notifiedKeys.has(kd.key)) {
@@ -374,7 +441,6 @@ async function fetchAccountsAndSpend() {
           await sendNotificationEmail(kd);
         }
       } else {
-        // If usage falls below threshold (e.g. new billing month or limit updated), clear the notification flag
         if (notifiedKeys.has(kd.key)) {
           notifiedKeys.delete(kd.key);
         }
@@ -394,8 +460,6 @@ setTimeout(fetchAccountsAndSpend, 5000);
 
 /**
  * Resolve per-1M-token pricing (input / cached input / output) for a model.
- * Reads models.json at runtime, with param-size / MoE fallbacks.
- * isPriority multiplies all rates by 1.5 (Standard path otherwise).
  */
 function getModelRates(model, isPriority = false) {
   let inputRate = 0.90;
@@ -481,7 +545,6 @@ function getModelRates(model, isPriority = false) {
 
 /**
  * Estimate cost for Fireworks AI models based on models.json pricing metadata
- * Returns price per 1M tokens or custom rates for text/vision models
  */
 function estimateCost(model, promptTokens, completionTokens, cachedTokens = 0, isPriority = false) {
   if (!model) return 0;
@@ -491,23 +554,10 @@ function estimateCost(model, promptTokens, completionTokens, cachedTokens = 0, i
   return parseFloat(cost.toFixed(6));
 }
 
-/**
- * --- Cached-token usage accumulator ---
- * billingUsage reports aggregate prompt tokens (cached + uncached merged) and
- * exposes NO cached-token breakdown, so the spend check overestimates cost by
- * billing every prompt token at the full input rate. To correct this, we
- * accumulate the real cached_tokens (captured per response) keyed by month +
- * official model id, persisted into keys.json under `usage_accumulator`.
- * The spend check then subtracts the cached-token discount from the
- * billingUsage-derived cost. The month key aligns with billingUsage's
- * startTime (beginning of current UTC month) window.
- */
 function getAccumulatorMonthKey(date = new Date()) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-// Normalize a request model id (may be a beautiful id or already-official id)
-// to the official Fireworks model id so it matches billingUsage.modelName.
 function normalizeToOfficialModelId(model) {
   if (!model) return '';
   if (model.includes('accounts/fireworks/models/')) return model;
@@ -516,13 +566,23 @@ function normalizeToOfficialModelId(model) {
   return model;
 }
 
-// Debounced keys.json flush so high-frequency requests don't hammer disk.
+// Debounced database flush for high frequency usage accumulators
 let keysSaveTimer = null;
-function scheduleKeysSave() {
+let dirtyKeys = new Set();
+
+function scheduleKeysSave(selectedKey) {
+  dirtyKeys.add(selectedKey);
   if (keysSaveTimer) return;
-  keysSaveTimer = setTimeout(() => {
+  keysSaveTimer = setTimeout(async () => {
     keysSaveTimer = null;
-    saveKeysDetail();
+    const keysToSave = Array.from(dirtyKeys);
+    dirtyKeys.clear();
+    for (const k of keysToSave) {
+      const kd = keysDetail.find(kd => kd.key === k);
+      if (kd) {
+        await saveKeyDetailToDB(kd);
+      }
+    }
   }, 10000);
 }
 
@@ -545,14 +605,12 @@ function accumulateUsageForKey(selectedKey, model, promptTokens, completionToken
   entry.completion_tokens += completionTokens || 0;
   entry.cached_tokens += cachedTokens || 0;
   entry.requests += 1;
-  scheduleKeysSave();
+  scheduleKeysSave(selectedKey);
 }
 
 function addRequestLog(log) {
   log.cost = estimateCost(log.model, log.prompt_tokens, log.completion_tokens, log.cached_tokens, log.isPriority);
-  // Accumulate real cached tokens (from response usage) for spend correction.
   accumulateUsageForKey(log.selectedKey, log.model, log.prompt_tokens, log.completion_tokens, log.cached_tokens);
-  // Never expose the real API key via the /api/logs endpoint.
   if (log.selectedKey !== undefined) delete log.selectedKey;
   requestLogs.unshift(log);
   if (requestLogs.length > MAX_LOGS) {
@@ -560,9 +618,6 @@ function addRequestLog(log) {
   }
 }
 
-/**
- * Helper to get a ProxyAgent dispatcher if proxyUrl is set.
- */
 function getProxyDispatcher(url) {
   if (!url) return undefined;
   try {
@@ -573,9 +628,6 @@ function getProxyDispatcher(url) {
   }
 }
 
-/**
- * Read request body stream into a single Buffer.
- */
 async function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -585,18 +637,12 @@ async function readBody(req) {
   });
 }
 
-/**
- * Helper to read JSON request body.
- */
 async function readJsonBody(req) {
   const buffer = await readBody(req);
   if (!buffer || buffer.length === 0) return {};
   return JSON.parse(buffer.toString('utf8'));
 }
 
-/**
- * Proxies standard requests with round-robin or exhaustion retry mechanisms.
- */
 async function handleProxyRequest(req, res, requestId) {
   const start = Date.now();
   
@@ -607,7 +653,6 @@ async function handleProxyRequest(req, res, requestId) {
     return;
   }
 
-  // Check if keys are suspended due to spend limit (Keep check but it will only trigger if we manually set isSuspended)
   if (isSuspended) {
     res.statusCode = 503;
     res.setHeader('Content-Type', 'application/json');
@@ -620,7 +665,6 @@ async function handleProxyRequest(req, res, requestId) {
     return;
   }
 
-  // 1. Perform password check for proxy requests
   const authHeader = req.headers['authorization'];
   if (clientPassword) {
     const expectedBearer = `Bearer ${clientPassword}`;
@@ -638,7 +682,6 @@ async function handleProxyRequest(req, res, requestId) {
     }
   }
 
-  // 2. Buffer request body to support retries on failures
   let bodyBuffer = null;
   let bodyJson = null;
   let isPriority = false;
@@ -650,15 +693,12 @@ async function handleProxyRequest(req, res, requestId) {
         try {
           bodyJson = JSON.parse(bodyBuffer.toString('utf8'));
           
-          // Map beautiful model ID to fireworks real model ID if match exists
           if (bodyJson && bodyJson.model) {
             const requestedModel = bodyJson.model;
-            // Support matching clean ID directly or matching with potential prefix like "fireworks/"
             const cleanKey = requestedModel.replace(/^accounts\/fireworks\/models\//, '').replace(/^fireworks\//, '');
             if (modelsMap[cleanKey]) {
               console.log(`[Model Map] Mapping beautiful ID "${requestedModel}" -> real ID "${modelsMap[cleanKey]}"`);
               bodyJson.model = modelsMap[cleanKey];
-              // Re-serialize the body
               bodyBuffer = Buffer.from(JSON.stringify(bodyJson), 'utf8');
             }
           }
@@ -690,7 +730,6 @@ async function handleProxyRequest(req, res, requestId) {
       continue;
     }
 
-    // Check if the current key has exceeded maxAllowedSpend
     const keyDetail = keysDetail.find(kd => kd.key === selectedKey);
     if (keyDetail && keyDetail.total_used >= maxAllowedSpend) {
       console.warn(`[${requestId}] Key [${keyIndex + 1}] has exceeded maxAllowedSpend ($${keyDetail.total_used.toFixed(4)} >= $${maxAllowedSpend.toFixed(2)}). Switching key...`);
@@ -703,9 +742,6 @@ async function handleProxyRequest(req, res, requestId) {
     console.log(`[${requestId}] Attempt ${attempts + 1} | Using Key [${keyIndex + 1}/${keys.length}]: ${maskedKey} | Mode: ${mode}`);
     
     const headers = {};
-    // Hop-by-hop / undici-unsupported headers must NOT be forwarded upstream.
-    // - expect: undici fetch throws UND_ERR_NOT_SUPPORTED on "100-continue"
-    // - connection/keep-alive/transfer-encoding/upgrade/etc. are hop-by-hop
     const stripHeaders = new Set([
       'host', 'expect', 'connection', 'keep-alive', 'transfer-encoding',
       'upgrade', 'proxy-connection', 'proxy-authenticate', 'proxy-authorization',
@@ -720,9 +756,6 @@ async function handleProxyRequest(req, res, requestId) {
       headers['content-length'] = bodyBuffer.length.toString();
     }
     
-    // Fireworks 官方 API 路径在 /v1 前需要加 /inference 前缀
-    // 例如：/v1/chat/completions -> /inference/v1/chat/completions
-    // 但模型列表 /v1/models 在官方是 /v1/models（已在 HTTP 路由层直返，无需转发）
     const proxiedPath = req.url.startsWith('/inference/') || req.url === '/v1/models' || req.url.startsWith('/v1/models?')
       ? req.url
       : `/inference${req.url.startsWith('/') ? req.url : `/${req.url}`}`;
@@ -1030,9 +1063,10 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       
       if (Array.isArray(body.keys)) {
-        // Support saving simple key list, dynamically mapping/preserving existing details
         const incomingKeys = body.keys.map(k => k.trim()).filter(k => k.length > 0);
-        keysDetail = incomingKeys.map(k => {
+        
+        // 1. Compute new keys detail
+        const newKeysDetail = incomingKeys.map(k => {
           const existing = keysDetail.find(kd => kd.key === k);
           return existing || {
             key: k,
@@ -1046,8 +1080,19 @@ const server = http.createServer(async (req, res) => {
             usage_accumulator: {}
           };
         });
+        
+        // 2. Identify deleted keys and remove them from database
+        const newKeysSet = new Set(incomingKeys);
+        const deletedKeys = keysDetail.filter(kd => !newKeysSet.has(kd.key));
+        for (const dk of deletedKeys) {
+          await pool.query('DELETE FROM fw_keys WHERE key = $1', [dk.key]);
+        }
+
+        keysDetail = newKeysDetail;
         keys = incomingKeys;
-        saveKeysDetail();
+
+        // 3. Save new keys to database
+        await saveAllKeysDetailToDB();
       }
       if (body.mode === 'round-robin' || body.mode === 'exhaustion') {
         mode = body.mode;
@@ -1074,7 +1119,7 @@ const server = http.createServer(async (req, res) => {
         currentIndex = Math.max(0, keys.length - 1);
       }
       
-      saveConfigToFile();
+      await saveConfigToDB();
       fetchAccountsAndSpend();
 
       res.writeHead(200, { 'Content-Type': 'application/json' });

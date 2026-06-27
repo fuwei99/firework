@@ -10,6 +10,7 @@
   "dependencies": {
     "dotenv": "^16.4.5",
     "nodemailer": "^9.0.1",
+    "pg": "^8.22.0",
     "undici": "^6.19.2"
   }
 }
