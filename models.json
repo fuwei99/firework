@@ -1,16 +1,114 @@
 {
-  "glm-5.2": "accounts/fireworks/models/glm-5p2",
-  "kimi-k2.7-code": "accounts/fireworks/models/kimi-k2p7-code",
-  "minimax-m3": "accounts/fireworks/models/minimax-m3",
-  "qwen-3.7-plus": "accounts/fireworks/models/qwen3p7-plus",
-  "deepseek-v4-pro": "accounts/fireworks/models/deepseek-v4-pro",
-  "kimi-k2.6": "accounts/fireworks/models/kimi-k2p6",
-  "minimax-m2.7": "accounts/fireworks/models/minimax-m2p7",
-  "deepseek-v4-flash": "accounts/fireworks/models/deepseek-v4-flash",
-  "gpt-oss-120b": "accounts/fireworks/models/gpt-oss-120b",
-  "gpt-oss-20b": "accounts/fireworks/models/gpt-oss-20b",
-  "qwen3-embedding-8b": "accounts/fireworks/models/qwen3-embedding-8b",
-  "qwen3-reranker-8b": "accounts/fireworks/models/qwen3-reranker-8b",
-  "glm-5.1": "accounts/fireworks/models/glm-5p1",
-  "nemotron-3-ultra-nvfp4": "accounts/fireworks/models/nemotron-3-ultra-nvfp4"
+  "glm-5.2": {
+    "id": "accounts/fireworks/models/glm-5p2",
+    "input_price": 1.40,
+    "cached_input_price": 0.14,
+    "output_price": 4.40,
+    "model_type": "LLM",
+    "supports_vision": false
+  },
+  "kimi-k2.7-code": {
+    "id": "accounts/fireworks/models/kimi-k2p7-code",
+    "input_price": 0.95,
+    "cached_input_price": 0.19,
+    "output_price": 4.00,
+    "model_type": "LLM",
+    "supports_vision": true
+  },
+  "minimax-m3": {
+    "id": "accounts/fireworks/models/minimax-m3",
+    "input_price": 0.30,
+    "cached_input_price": 0.06,
+    "output_price": 1.20,
+    "model_type": "LLM",
+    "supports_vision": true
+  },
+  "qwen-3.7-plus": {
+    "id": "accounts/fireworks/models/qwen3p7-plus",
+    "input_price": 0.40,
+    "cached_input_price": 0.08,
+    "output_price": 1.60,
+    "model_type": "LLM",
+    "supports_vision": true
+  },
+  "deepseek-v4-pro": {
+    "id": "accounts/fireworks/models/deepseek-v4-pro",
+    "input_price": 1.74,
+    "cached_input_price": 0.15,
+    "output_price": 3.48,
+    "model_type": "LLM",
+    "supports_vision": false
+  },
+  "kimi-k2.6": {
+    "id": "accounts/fireworks/models/kimi-k2p6",
+    "input_price": 0.95,
+    "cached_input_price": 0.16,
+    "output_price": 4.00,
+    "model_type": "LLM",
+    "supports_vision": true
+  },
+  "minimax-m2.7": {
+    "id": "accounts/fireworks/models/minimax-m2p7",
+    "input_price": 0.30,
+    "cached_input_price": 0.06,
+    "output_price": 1.20,
+    "model_type": "LLM",
+    "supports_vision": false
+  },
+  "deepseek-v4-flash": {
+    "id": "accounts/fireworks/models/deepseek-v4-flash",
+    "input_price": 0.14,
+    "cached_input_price": 0.03,
+    "output_price": 0.28,
+    "model_type": "LLM",
+    "supports_vision": false
+  },
+  "gpt-oss-120b": {
+    "id": "accounts/fireworks/models/gpt-oss-120b",
+    "input_price": 0.15,
+    "cached_input_price": 0.01,
+    "output_price": 0.60,
+    "model_type": "LLM",
+    "supports_vision": false
+  },
+  "gpt-oss-20b": {
+    "id": "accounts/fireworks/models/gpt-oss-20b",
+    "input_price": 0.07,
+    "cached_input_price": 0.04,
+    "output_price": 0.30,
+    "model_type": "LLM",
+    "supports_vision": false
+  },
+  "qwen3-embedding-8b": {
+    "id": "accounts/fireworks/models/qwen3-embedding-8b",
+    "input_price": 0.10,
+    "cached_input_price": 0.10,
+    "output_price": 0.0,
+    "model_type": "Embeddings",
+    "supports_vision": false
+  },
+  "qwen3-reranker-8b": {
+    "id": "accounts/fireworks/models/qwen3-reranker-8b",
+    "input_price": 0.20,
+    "cached_input_price": 0.20,
+    "output_price": 0.0,
+    "model_type": "Ranking",
+    "supports_vision": false
+  },
+  "glm-5.1": {
+    "id": "accounts/fireworks/models/glm-5p1",
+    "input_price": 1.40,
+    "cached_input_price": 0.26,
+    "output_price": 4.40,
+    "model_type": "LLM",
+    "supports_vision": false
+  },
+  "nemotron-3-ultra-nvfp4": {
+    "id": "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+    "input_price": 0.60,
+    "cached_input_price": 0.12,
+    "output_price": 2.40,
+    "model_type": "LLM",
+    "supports_vision": false
+  }
 }

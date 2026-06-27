@@ -14,7 +14,17 @@ let modelsMap = {};
 function loadModelsMap() {
   try {
     if (fs.existsSync(MODELS_PATH)) {
-      modelsMap = JSON.parse(fs.readFileSync(MODELS_PATH, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(MODELS_PATH, 'utf8'));
+      // Transform new object style into old simple string map style for compatibility, 
+      // while keeping the rich object config accessible.
+      modelsMap = {};
+      for (const [beautifulId, value] of Object.entries(parsed)) {
+        if (value && typeof value === 'object' && value.id) {
+          modelsMap[beautifulId] = value.id;
+        } else {
+          modelsMap[beautifulId] = value;
+        }
+      }
     }
   } catch (e) {
     console.error('[Models] Failed to parse models.json:', e.message);
@@ -152,53 +162,55 @@ async function sendNotificationEmail(newlyExcessiveKey) {
   });
 
   // Filter out all currently suspended keys (spend >= maxAllowedSpend)
-  const currentlySuspendedKeys = keysDetail.filter(kd => kd.monthly_used >= maxAllowedSpend);
+  const currentlySuspendedKeys = keysDetail.filter(kd => kd.total_used >= maxAllowedSpend);
   
   // Format for the currently triggered key
-  const triggeredKeyInfo = `Key: ${maskKey(newlyExcessiveKey.key)}\nAccount ID: ${newlyExcessiveKey.account_id}\nEmail: ${newlyExcessiveKey.email}\nSpend: $${newlyExcessiveKey.monthly_used.toFixed(4)} USD\nLimit: $${newlyExcessiveKey.monthly_limit.toFixed(2)} USD\nLast Checked: ${newlyExcessiveKey.last_checked}`;
+  const triggeredKeyInfo = `Key: ${maskKey(newlyExcessiveKey.key)}\nAccount ID: ${newlyExcessiveKey.account_id}\nEmail: ${newlyExcessiveKey.email}\nSpend: $${newlyExcessiveKey.total_used.toFixed(4)} USD\nLast Checked: ${newlyExcessiveKey.last_checked}`;
 
-  // Format list for all currently suspended keys
-  const suspendedListText = currentlySuspendedKeys.map(kd => {
-    return `- Email/Account: ${kd.email || kd.account_id || maskKey(kd.key)} (Spend: $${kd.monthly_used.toFixed(4)} USD, Last Checked: ${kd.last_checked})`;
+  const suspendedKeys = keysDetail.filter(kd => kd.total_used >= maxAllowedSpend);
+  const suspendedListText = suspendedKeys.map(kd => {
+    return `- Email/Account: ${kd.email || kd.account_id || maskKey(kd.key)} (Spend: $${kd.total_used.toFixed(4)} USD, Last Checked: ${kd.last_checked})`;
   }).join('\n');
 
-  const suspendedListHtml = currentlySuspendedKeys.map(kd => {
+  const suspendedListHtml = suspendedKeys.map(kd => {
     return `
-    <div style="border-left: 4px solid #ef4444; background-color: #fcfcfc; padding: 10px; margin-bottom: 10px; border-radius: 0 4px 4px 0;">
+    <div style="padding: 10px; border-bottom: 1px solid #eee;">
       <strong>Email/Account:</strong> ${kd.email || kd.account_id || maskKey(kd.key)}<br/>
-      <strong>Spend:</strong> <span style="color: #ef4444; font-weight: bold;">$${kd.monthly_used.toFixed(4)} USD</span><br/>
+      <strong>Spend:</strong> <span style="color: #ef4444; font-weight: bold;">$${kd.total_used.toFixed(4)} USD</span><br/>
       <strong>Last Checked:</strong> ${kd.last_checked}
-    </div>
-    `;
+    </div>`;
   }).join('');
 
   const mailOptions = {
-    from: smtpUser || '"Fireworks Proxy Monitoring" <tokendance_agent@qq.com>',
+    from: smtpUser,
     to: notificationEmail,
-    subject: `🚨 Fireworks Key Suspended - ${newlyExcessiveKey.email || newlyExcessiveKey.account_id || maskKey(newlyExcessiveKey.key)}`,
+    subject: `🚨 Fireworks Key Spend Alert: ${newlyExcessiveKey.email || newlyExcessiveKey.account_id || maskKey(newlyExcessiveKey.key)}`,
     text: `${newlyExcessiveKey.email || newlyExcessiveKey.account_id || maskKey(newlyExcessiveKey.key)}在${newlyExcessiveKey.last_checked}时间时额度用量已经超过${maxAllowedSpend.toFixed(2)}刀，目前已经暂停使用，下面是他的详细信息：\n\n${triggeredKeyInfo}\n\n以下是目前暂停的邮箱和他们的详细信息：\n\n${suspendedListText}`,
-    html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #ffccd5; background-color: #fff5f5; border-radius: 8px;">
-      <h2 style="color: #ef4444; margin-top: 0;">🚨 Fireworks Key Suspended</h2>
-      <p style="font-size: 15px; color: #333;">
-        <strong>${newlyExcessiveKey.email || newlyExcessiveKey.account_id || maskKey(newlyExcessiveKey.key)}</strong> 在 <code>${newlyExcessiveKey.last_checked}</code> 时间时额度用量已经超过 <strong>${maxAllowedSpend.toFixed(2)} 刀</strong>，目前已经暂停使用，下面是他的详细信息：
-      </p>
-      
-      <div style="border: 1px solid #ffccd5; background-color: #fff8f8; padding: 15px; border-radius: 6px; margin: 15px 0;">
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr><td style="padding: 4px 0; font-weight: bold; color: #555; width: 120px;">Account ID:</td><td style="padding: 4px 0; color: #333;">${newlyExcessiveKey.account_id}</td></tr>
-          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Email:</td><td style="padding: 4px 0; color: #333;">${newlyExcessiveKey.email}</td></tr>
-          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Spend:</td><td style="padding: 4px 0; font-size: 16px; color: #ef4444; font-weight: bold;">$${newlyExcessiveKey.monthly_used.toFixed(4)} USD</td></tr>
-          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Account Limit:</td><td style="padding: 4px 0; color: #333;">$${newlyExcessiveKey.monthly_limit.toFixed(2)} USD</td></tr>
-          <tr><td style="padding: 4px 0; font-weight: bold; color: #555;">Last Checked:</td><td style="padding: 4px 0; color: #666; font-size: 13px;">${newlyExcessiveKey.last_checked}</td></tr>
+    html: `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+      <div style="background-color: #ef4444; padding: 20px; text-align: center; color: white;">
+        <h2 style="margin: 0; font-size: 20px; font-weight: bold;">Fireworks Key Spend Alert</h2>
+      </div>
+      <div style="padding: 25px; background-color: #fff;">
+        <p style="font-size: 15px; margin-top: 0;">
+          <strong>${newlyExcessiveKey.email || newlyExcessiveKey.account_id || maskKey(newlyExcessiveKey.key)}</strong> 在 <code>${newlyExcessiveKey.last_checked}</code> 时间时额度用量已经超过 <strong>${maxAllowedSpend.toFixed(2)} 刀</strong>，目前已经暂停使用，下面是他的详细信息：
+        </p>
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background-color: #f9fafb; border-radius: 6px; overflow: hidden;">
+          <tr style="border-bottom: 1px solid #edf2f7;"><td style="padding: 12px; font-weight: bold; color: #4a5568; width: 120px;">Key:</td><td style="padding: 12px; font-family: monospace; color: #2d3748;">${maskKey(newlyExcessiveKey.key)}</td></tr>
+          <tr style="border-bottom: 1px solid #edf2f7;"><td style="padding: 12px; font-weight: bold; color: #4a5568;">Account ID:</td><td style="padding: 12px; color: #2d3748;">${newlyExcessiveKey.account_id}</td></tr>
+          <tr style="border-bottom: 1px solid #edf2f7;"><td style="padding: 12px; font-weight: bold; color: #4a5568;">Email:</td><td style="padding: 12px; color: #2d3748;">${newlyExcessiveKey.email}</td></tr>
+          <tr style="border-bottom: 1px solid #edf2f7;"><td style="padding: 12px; font-weight: bold; color: #4a5568;">Spend:</td><td style="padding: 12px; font-size: 16px; color: #ef4444; font-weight: bold;">$${newlyExcessiveKey.total_used.toFixed(4)} USD</td></tr>
+          <tr><td style="padding: 12px; font-weight: bold; color: #4a5568;">Last Checked:</td><td style="padding: 12px; color: #718096; font-size: 13px;">${newlyExcessiveKey.last_checked}</td></tr>
         </table>
+        
+        <div style="margin-top: 30px;">
+          <h3 style="font-size: 16px; border-bottom: 2px solid #edf2f7; padding-bottom: 8px; color: #2d3748;">目前所有已暂停的账号清单</h3>
+          ${suspendedListHtml}
+        </div>
       </div>
-
-      <h3 style="color: #333; margin-top: 20px; border-bottom: 2px solid #ef4444; padding-bottom: 5px;">以下是目前暂停的邮箱和他们的详细信息：</h3>
-      <div style="margin-top: 15px;">
-        ${suspendedListHtml}
+      <div style="background-color: #f7fafc; padding: 15px; text-align: center; font-size: 12px; color: #a0aec0; border-top: 1px solid #edf2f7;">
+        <p style="margin: 0;">This check runs automatically every 5 minutes.</p>
       </div>
-
-      <p style="font-size: 13px; color: #666; border-top: 1px solid #ddd; padding-top: 10px; margin-top: 20px;">This check runs automatically every 5 minutes.</p>
     </div>`
   };
 
@@ -221,6 +233,11 @@ async function fetchAccountsAndSpend() {
   let totalUsage = 0;
   let hasValidCheck = false;
 
+  // Calculate startTime (beginning of current month in UTC)
+  const now = new Date();
+  const startTime = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const endTime = now.toISOString();
+
   for (let i = 0; i < keysDetail.length; i++) {
     const kd = keysDetail[i];
     const verifyOptions = {
@@ -237,7 +254,6 @@ async function fetchAccountsAndSpend() {
         const responseData = await resVerify.json();
         const accountInfo = responseData.accounts?.[0];
         if (accountInfo) {
-          // Extract actual account ID from "accounts/xxx" format
           const rawName = accountInfo.name || '';
           const accountId = rawName.split('/').pop() || '';
           
@@ -246,20 +262,61 @@ async function fetchAccountsAndSpend() {
             kd.display_name = accountInfo.displayName || 'Fireworks User';
             kd.email = accountInfo.email || '';
 
-            const quotaRes = await fetch(`https://api.fireworks.ai/v1/accounts/${accountId}/quotas/monthly-spend-usd`, verifyOptions);
-            if (quotaRes.status === 200) {
-              const quotaData = await quotaRes.json();
-              const usage = parseFloat(quotaData.usage || '0');
-              const limit = parseFloat(quotaData.value || '0');
+            // Query serverless billingUsage for this account
+            const billingUrl = `https://api.fireworks.ai/v1/accounts/${accountId}/billingUsage?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}&usageType=SERVERLESS&groupBy=api_key_id&groupBy=api_key_name&groupBy=model_name`;
+            const billingRes = await fetch(billingUrl, verifyOptions);
+            
+            if (billingRes.status === 200) {
+              const billingData = await billingRes.json();
+              const serverlessCosts = billingData.serverlessCosts || [];
               
-              kd.monthly_used = usage;
-              kd.monthly_limit = limit;
-              kd.monthly_remaining = Math.max(0, limit - usage);
+              // Filter costs to only include usage from THIS specific key.
+              // We match by key prefix or find the keyId from the API.
+              // Let's list the API keys first or match the key prefix.
+              let targetKeyId = null;
+              try {
+                // Fetch the list of API keys for this user to match keyId
+                const userId = accountId; // Fireworks usually has user_id same as account_id or we can list users
+                const keysListUrl = `https://api.fireworks.ai/v1/accounts/${accountId}/users/${userId}/apiKeys`;
+                const keysListRes = await fetch(keysListUrl, verifyOptions);
+                if (keysListRes.status === 200) {
+                  const keysListData = await keysListRes.json();
+                  const matchedKeyObj = (keysListData.apiKeys || []).find(k => kd.key.startsWith(k.prefix || ''));
+                  if (matchedKeyObj) {
+                    targetKeyId = matchedKeyObj.keyId;
+                  }
+                }
+              } catch (keyErr) {
+                console.error(`[Spend Check] Error retrieving keyId mapping for ${maskKey(kd.key)}:`, keyErr.message);
+              }
+
+              let calculatedSpend = 0;
+              for (const costItem of serverlessCosts) {
+                // If we successfully matched the keyId, filter by it.
+                // Otherwise, fall back to checking if the item belongs to this account (since this is a single-key account usually, but filtering is safer).
+                if (targetKeyId && costItem.apiKeyId !== targetKeyId) {
+                  continue; 
+                }
+
+                const model = costItem.modelName || (costItem.group && costItem.group.model_name) || '';
+                const promptTokens = parseInt(costItem.promptTokens || '0', 10);
+                const completionTokens = parseInt(costItem.completionTokens || '0', 10);
+                const cachedTokens = 0; // billingUsage does not separate cached tokens in response directly, we calculate with standard rate
+
+                const itemCost = estimateCost(model, promptTokens, completionTokens, cachedTokens, false);
+                calculatedSpend += itemCost;
+              }
+
+              kd.total_used = parseFloat(calculatedSpend.toFixed(6));
+              kd.total_remaining = Math.max(0, 6.0 - kd.total_used);
               kd.status = 'Active';
               kd.last_checked = new Date().toISOString();
 
-              totalUsage += usage;
+              totalUsage += kd.total_used;
               hasValidCheck = true;
+            } else {
+              kd.status = `Billing API Error ${billingRes.status}`;
+              kd.last_checked = new Date().toISOString();
             }
           }
         }
@@ -281,7 +338,7 @@ async function fetchAccountsAndSpend() {
 
     // Detect keys that have newly exceeded maxAllowedSpend (dynamically loaded from config)
     for (const kd of keysDetail) {
-      if (kd.monthly_used >= maxAllowedSpend) {
+      if (kd.total_used >= maxAllowedSpend) {
         if (!notifiedKeys.has(kd.key)) {
           notifiedKeys.add(kd.key);
           console.log(`[Spend Check] Key ${maskKey(kd.key)} newly exceeded the threshold ($${maxAllowedSpend}). Sending notification email.`);
@@ -296,9 +353,6 @@ async function fetchAccountsAndSpend() {
     }
 
     if (totalUsage >= maxAllowedSpend) {
-      // NOTE: We no longer suspend the entire server (isSuspended = true) 
-      // if totalUsage exceeds maxAllowedSpend, because we want keys to failover 
-      // individually. We only print status or let individual key checks block.
       console.warn(`[Spend Check] Aggregate spend usage of all keys: $${totalUsage.toFixed(4)} USD (Limit: $${maxAllowedSpend.toFixed(2)} USD).`);
     }
   }
@@ -310,7 +364,7 @@ setInterval(fetchAccountsAndSpend, 5 * 60 * 1000);
 setTimeout(fetchAccountsAndSpend, 5000);
 
 /**
- * Estimate cost for Fireworks AI models based on api-doc.md
+ * Estimate cost for Fireworks AI models based on models.json pricing metadata
  * Returns price per 1M tokens or custom rates for text/vision models
  */
 function estimateCost(model, promptTokens, completionTokens, cachedTokens = 0, isPriority = false) {
@@ -321,113 +375,71 @@ function estimateCost(model, promptTokens, completionTokens, cachedTokens = 0, i
   let cachedRate = null;
   let outputRate = 0.90;
 
-  if (modelLower.includes('kimi-k2p7-code') || modelLower.includes('kimi-k2.7-code')) {
-    if (modelLower.includes('fast')) {
-      inputRate = 1.90;
-      cachedRate = 0.38;
-      outputRate = 8.00;
-    } else {
-      inputRate = isPriority ? 1.425 : 0.95;
-      cachedRate = isPriority ? 0.285 : 0.19;
-      outputRate = isPriority ? 6.00 : 4.00;
-    }
-  } else if (modelLower.includes('kimi-k2p6') || modelLower.includes('kimi-k2.6')) {
-    if (modelLower.includes('fast')) {
-      inputRate = 2.00;
-      cachedRate = 0.30;
-      outputRate = 8.00;
-    } else {
-      inputRate = isPriority ? 1.50 : 0.95;
-      cachedRate = isPriority ? 0.22 : 0.16;
-      outputRate = isPriority ? 6.00 : 4.00;
-    }
-  } else if (modelLower.includes('kimi-k2p5') || modelLower.includes('kimi-k2.5')) {
-    inputRate = 0.60;
-    cachedRate = 0.10;
-    outputRate = 3.00;
-  } else if (modelLower.includes('deepseek-v4-pro')) {
-    inputRate = isPriority ? 2.61 : 1.74;
-    cachedRate = isPriority ? 0.218 : 0.145;
-    outputRate = isPriority ? 5.22 : 3.48;
-  } else if (modelLower.includes('deepseek-v4-flash')) {
-    inputRate = 0.14;
-    cachedRate = 0.028;
-    outputRate = 0.28;
-  } else if (modelLower.includes('glm-5p2') || modelLower.includes('glm-5.2')) {
-    inputRate = isPriority ? 2.10 : 1.40;
-    cachedRate = isPriority ? 0.39 : 0.26;
-    outputRate = isPriority ? 6.60 : 4.40;
-  } else if (modelLower.includes('glm-5p1') || modelLower.includes('glm-5.1')) {
-    if (modelLower.includes('fast')) {
-      inputRate = 2.80;
-      cachedRate = 0.52;
-      outputRate = 8.80;
-    } else {
-      inputRate = isPriority ? 2.10 : 1.40;
-      cachedRate = isPriority ? 0.39 : 0.26;
-      outputRate = isPriority ? 6.60 : 4.40;
-    }
-  } else if (modelLower.includes('qwen3p7-plus') || modelLower.includes('qwen-3.7-plus')) {
-    inputRate = 0.40;
-    cachedRate = 0.08;
-    outputRate = 1.60;
-  } else if (modelLower.includes('qwen3p6-plus') || modelLower.includes('qwen-3.6-plus')) {
-    inputRate = 0.50;
-    cachedRate = 0.10;
-    outputRate = 3.00;
-  } else if (modelLower.includes('minimax-m3') || modelLower.includes('minimax-m2p7') || modelLower.includes('minimax-2.7')) {
-    inputRate = isPriority ? 0.45 : 0.30;
-    cachedRate = isPriority ? 0.09 : 0.06;
-    outputRate = isPriority ? 1.80 : 1.20;
-  } else if (modelLower.includes('minimax-m2p5') || modelLower.includes('minimax-2.5')) {
-    inputRate = 0.30;
-    cachedRate = 0.03;
-    outputRate = 1.20;
-  } else if (modelLower.includes('gpt-oss-120b')) {
-    inputRate = isPriority ? 0.18 : 0.15;
-    cachedRate = isPriority ? 0.018 : 0.015;
-    outputRate = isPriority ? 0.72 : 0.60;
-  } else if (modelLower.includes('gpt-oss-20b')) {
-    inputRate = 0.07;
-    cachedRate = 0.035;
-    outputRate = 0.30;
-  } else if (modelLower.includes('qwen3-embedding-8b') || modelLower.includes('qwen3-reranker-8b')) {
-    // Pricing for qwen3-embedding-8b / qwen3-reranker-8b on serverless
-    inputRate = 0.05;
-    cachedRate = 0.025;
-    outputRate = 0.05;
-  } else if (modelLower.includes('nemotron-3-ultra')) {
-    inputRate = 0.60;
-    cachedRate = 0.12;
-    outputRate = 2.40;
-  } else {
-    if (modelLower.includes('moe')) {
-      if (modelLower.includes('8x7b')) {
-        inputRate = 0.50;
-        outputRate = 0.50;
-      } else {
-        inputRate = 1.20;
-        outputRate = 1.20;
+  try {
+    // Try to locate the model in models.json (loaded from MODELS_PATH)
+    if (fs.existsSync(MODELS_PATH)) {
+      const parsedModels = JSON.parse(fs.readFileSync(MODELS_PATH, 'utf8'));
+      let foundConfig = null;
+
+      // Match by exact key or clean key or target id
+      const cleanModel = modelLower.replace(/^accounts\/fireworks\/models\//, '').replace(/^fireworks\//, '');
+      
+      for (const [beautifulId, config] of Object.entries(parsedModels)) {
+        if (config && typeof config === 'object') {
+          const configId = (config.id || '').toLowerCase();
+          if (
+            beautifulId.toLowerCase() === cleanModel || 
+            configId.includes(modelLower) || 
+            modelLower.includes(configId) ||
+            (configId && cleanModel.includes(configId.replace(/^accounts\/fireworks\/models\//, '').replace(/^fireworks\//, '')))
+          ) {
+            foundConfig = config;
+            break;
+          }
+        }
       }
-    } else {
-      const paramMatch = modelLower.match(/(\d+)b/);
-      if (paramMatch) {
-        const size = parseInt(paramMatch[1], 10);
-        if (size < 4) {
-          inputRate = 0.10;
-          outputRate = 0.10;
-        } else if (size <= 16) {
-          inputRate = 0.20;
-          outputRate = 0.20;
-        } else {
-          inputRate = 0.90;
-          outputRate = 0.90;
+
+      if (foundConfig) {
+        inputRate = typeof foundConfig.input_price === 'number' ? foundConfig.input_price : inputRate;
+        cachedRate = typeof foundConfig.cached_input_price === 'number' ? foundConfig.cached_input_price : cachedRate;
+        outputRate = typeof foundConfig.output_price === 'number' ? foundConfig.output_price : outputRate;
+        
+        // Handle priority multiplier if applicable
+        if (isPriority) {
+          inputRate *= 1.5;
+          if (cachedRate !== null) cachedRate *= 1.5;
+          outputRate *= 1.5;
         }
       } else {
-        inputRate = 0.90;
-        outputRate = 0.90;
+        // Fallbacks for general models
+        if (modelLower.includes('moe')) {
+          if (modelLower.includes('8x7b')) {
+            inputRate = 0.50;
+            outputRate = 0.50;
+          } else {
+            inputRate = 1.20;
+            outputRate = 1.20;
+          }
+        } else {
+          const paramMatch = modelLower.match(/(\d+)b/);
+          if (paramMatch) {
+            const size = parseInt(paramMatch[1], 10);
+            if (size < 4) {
+              inputRate = 0.10;
+              outputRate = 0.10;
+            } else if (size <= 16) {
+              inputRate = 0.20;
+              outputRate = 0.20;
+            } else {
+              inputRate = 0.90;
+              outputRate = 0.90;
+            }
+          }
+        }
       }
     }
+  } catch (e) {
+    console.error('[Cost Estimate] Error parsing models.json for pricing:', e.message);
   }
 
   if (cachedRate === null) {
@@ -579,8 +591,8 @@ async function handleProxyRequest(req, res, requestId) {
 
     // Check if the current key has exceeded maxAllowedSpend
     const keyDetail = keysDetail.find(kd => kd.key === selectedKey);
-    if (keyDetail && keyDetail.monthly_used >= maxAllowedSpend) {
-      console.warn(`[${requestId}] Key [${keyIndex + 1}] has exceeded maxAllowedSpend ($${keyDetail.monthly_used.toFixed(4)} >= $${maxAllowedSpend.toFixed(2)}). Switching key...`);
+    if (keyDetail && keyDetail.total_used >= maxAllowedSpend) {
+      console.warn(`[${requestId}] Key [${keyIndex + 1}] has exceeded maxAllowedSpend ($${keyDetail.total_used.toFixed(4)} >= $${maxAllowedSpend.toFixed(2)}). Switching key...`);
       currentIndex = (currentIndex + 1) % keys.length;
       attempts++;
       continue;
@@ -916,9 +928,8 @@ const server = http.createServer(async (req, res) => {
             account_id: '',
             display_name: '',
             email: '',
-            monthly_limit: 0.0,
-            monthly_used: 0.0,
-            monthly_remaining: 0.0,
+            total_used: 0.0,
+            total_remaining: 6.0,
             status: 'Pending Verification',
             last_checked: ''
           };

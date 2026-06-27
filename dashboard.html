@@ -743,12 +743,11 @@
         return `<span style="color: var(--danger);">${kd.status}</span>`;
       }
       
-      const remaining = Number(kd.monthly_remaining).toFixed(2);
-      const limit = Number(kd.monthly_limit).toFixed(2);
-      const used = Number(kd.monthly_used).toFixed(4);
+      const used = Number(kd.total_used || 0).toFixed(4);
+      const remaining = Number(kd.total_remaining !== undefined ? kd.total_remaining : (6.0 - (kd.total_used || 0))).toFixed(4);
       
       return `<span style="color: var(--primary); font-weight: 500;">账号ID: ${kd.account_id}</span> 
-              <span style="margin-left: 10px; opacity: 0.9; font-size: 12px; color: var(--success);">已用: $${used} | 剩余: $${remaining} / $${limit}</span>`;
+              <span style="margin-left: 10px; opacity: 0.9; font-size: 12px; color: var(--success);">已用: $${used} | 剩余: $${remaining} / $6.00</span>`;
     }
 
     async function queryAllBalances() {
@@ -859,9 +858,8 @@
         account_id: '',
         display_name: '',
         email: '',
-        monthly_limit: 0.0,
-        monthly_used: 0.0,
-        monthly_remaining: 0.0,
+        total_used: 0.0,
+        total_remaining: 6.0,
         status: 'Pending Verification',
         last_checked: ''
       });
