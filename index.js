@@ -98,10 +98,11 @@ async function loadKeysFromDB() {
       last_checked: row.last_checked ? row.last_checked.toISOString() : '',
       total_used: parseFloat(row.total_used || 0),
       total_remaining: parseFloat(row.total_remaining || 6.0),
+      enabled: row.enabled !== false,
       usage_accumulator: row.usage_accumulator || {}
     }));
-    keys = keysDetail.map(kd => kd.key).filter(Boolean);
-    console.log(`[Keys] Loaded ${keys.length} key(s) from database.`);
+    keys = keysDetail.filter(kd => kd.enabled).map(kd => kd.key).filter(Boolean);
+    console.log(`[Keys] Loaded ${keysDetail.length} key(s) from database (${keys.length} active/enabled).`);
   } catch (err) {
     console.error('[Keys] Failed to load keys from DB:', err.message);
   }
@@ -138,8 +139,8 @@ async function saveConfigToDB() {
 async function saveKeyDetailToDB(kd) {
   try {
     await pool.query(`
-      INSERT INTO fw_keys (key, account_id, display_name, email, status, last_checked, total_used, total_remaining, usage_accumulator)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      INSERT INTO fw_keys (key, account_id, display_name, email, status, last_checked, total_used, total_remaining, enabled, usage_accumulator)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       ON CONFLICT (key) DO UPDATE SET
         account_id = EXCLUDED.account_id,
         display_name = EXCLUDED.display_name,
@@ -148,6 +149,7 @@ async function saveKeyDetailToDB(kd) {
         last_checked = EXCLUDED.last_checked,
         total_used = EXCLUDED.total_used,
         total_remaining = EXCLUDED.total_remaining,
+        enabled = EXCLUDED.enabled,
         usage_accumulator = EXCLUDED.usage_accumulator
     `, [
       kd.key,
@@ -158,6 +160,7 @@ async function saveKeyDetailToDB(kd) {
       kd.last_checked ? new Date(kd.last_checked) : null,
       kd.total_used,
       kd.total_remaining,
+      kd.enabled !== false,
       JSON.stringify(kd.usage_accumulator || {})
     ]);
   } catch (err) {
@@ -212,6 +215,7 @@ async function migrateFromJsonToDB() {
           last_checked: lk.last_checked || '',
           total_used: parseFloat(lk.total_used || 0),
           total_remaining: parseFloat(lk.total_remaining || 6.0),
+          enabled: lk.enabled !== false,
           usage_accumulator: lk.usage_accumulator || {}
         };
         await saveKeyDetailToDB(kd);
@@ -417,6 +421,11 @@ async function fetchAccountsAndSpend() {
             }
           }
         }
+      } else if (resVerify.status === 401 || resVerify.status === 402) {
+        kd.status = `HTTP Error ${resVerify.status}`;
+        kd.enabled = false; // Auto disable invalid or unpaid keys
+        kd.last_checked = new Date().toISOString();
+        console.warn(`[Spend Check] Key ${maskKey(kd.key)} returned ${resVerify.status}. Automatically disabling this key.`);
       } else {
         kd.status = `HTTP Error ${resVerify.status}`;
         kd.last_checked = new Date().toISOString();
@@ -428,6 +437,8 @@ async function fetchAccountsAndSpend() {
   }
 
   await saveAllKeysDetailToDB();
+  // Refresh active keys array
+  keys = keysDetail.filter(kd => kd.enabled).map(kd => kd.key).filter(Boolean);
 
   if (hasValidCheck) {
     currentSpendUsage = totalUsage;
@@ -1062,7 +1073,37 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       
-      if (Array.isArray(body.keys)) {
+      if (Array.isArray(body.keysDetail)) {
+        // Support saving detailed key objects directly from dashboard
+        const incomingKeys = body.keysDetail.map(k => k.key.trim()).filter(k => k.length > 0);
+        
+        const newKeysDetail = body.keysDetail.map(item => {
+          const existing = keysDetail.find(kd => kd.key === item.key);
+          return {
+            key: item.key.trim(),
+            account_id: item.account_id || (existing ? existing.account_id : ''),
+            display_name: item.display_name || (existing ? existing.display_name : 'Fireworks User'),
+            email: item.email || (existing ? existing.email : ''),
+            total_used: typeof item.total_used === 'number' ? item.total_used : (existing ? existing.total_used : 0.0),
+            total_remaining: typeof item.total_remaining === 'number' ? item.total_remaining : (existing ? existing.total_remaining : 6.0),
+            status: item.status || (existing ? existing.status : 'Pending Verification'),
+            last_checked: item.last_checked || (existing ? existing.last_checked : ''),
+            enabled: item.enabled !== false,
+            usage_accumulator: existing ? existing.usage_accumulator : {}
+          };
+        });
+
+        const newKeysSet = new Set(incomingKeys);
+        const deletedKeys = keysDetail.filter(kd => !newKeysSet.has(kd.key));
+        for (const dk of deletedKeys) {
+          await pool.query('DELETE FROM fw_keys WHERE key = $1', [dk.key]);
+        }
+
+        keysDetail = newKeysDetail;
+        keys = keysDetail.filter(kd => kd.enabled).map(kd => kd.key).filter(Boolean);
+
+        await saveAllKeysDetailToDB();
+      } else if (Array.isArray(body.keys)) {
         const incomingKeys = body.keys.map(k => k.trim()).filter(k => k.length > 0);
         
         // 1. Compute new keys detail
@@ -1077,6 +1118,7 @@ const server = http.createServer(async (req, res) => {
             total_remaining: 6.0,
             status: 'Pending Verification',
             last_checked: '',
+            enabled: true,
             usage_accumulator: {}
           };
         });
@@ -1089,7 +1131,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         keysDetail = newKeysDetail;
-        keys = incomingKeys;
+        keys = keysDetail.filter(kd => kd.enabled).map(kd => kd.key).filter(Boolean);
 
         // 3. Save new keys to database
         await saveAllKeysDetailToDB();

@@ -309,6 +309,78 @@
       gap: 8px;
     }
 
+    /* Switch Style */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: rgba(255,255,255,0.1);
+      transition: .3s;
+      border-radius: 24px;
+      border: 1px solid var(--border-color);
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: var(--text-muted);
+      transition: .3s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: rgba(16, 185, 129, 0.2);
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(20px);
+      background-color: var(--success);
+    }
+
+    .key-edit-input {
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--primary);
+      padding: 6px 12px;
+      border-radius: 6px;
+      color: var(--text-main);
+      font-family: monospace;
+      font-size: 14px;
+      width: 100%;
+      outline: none;
+    }
+    
+    .btn-edit {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      color: var(--warning);
+    }
+
+    .btn-edit:hover {
+      background: var(--warning);
+      color: #fff;
+    }
+
     .mode-selector {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -793,28 +865,62 @@
       list.forEach((kd, index) => {
         const isActive = index === config.currentIndex;
         const keyItem = document.createElement('div');
+        const isEnabled = kd.enabled !== false;
         keyItem.className = `key-item ${isActive ? 'active' : ''}`;
+        keyItem.style.opacity = isEnabled ? '1' : '0.5';
         
         keyItem.innerHTML = `
-          <div class="key-info" style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 70%; overflow: hidden;">
+          <div class="key-info" style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 60%; overflow: hidden;">
             <div style="display: flex; align-items: center; gap: 12px; width: 100%;">
               <div class="key-index">${index + 1}</div>
-              <div class="key-string" style="font-family: monospace; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-grow: 1;">${escapeHtml(kd.key)}</div>
+              <div id="key-display-${index}" class="key-string" style="font-family: monospace; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-grow: 1;">${escapeHtml(kd.key)}</div>
             </div>
             <div class="key-balance-info" style="margin-left: 40px; font-size: 13px; color: var(--text-muted);">
               ${renderKeyBalance(kd)}
             </div>
           </div>
           <div class="key-actions">
-            ${isActive 
+            <label class="switch" title="${isEnabled ? '已启用' : '已禁用'}">
+              <input type="checkbox" ${isEnabled ? 'checked' : ''} onchange="toggleKeyEnabled(${index}, this.checked)">
+              <span class="slider"></span>
+            </label>
+            <button id="btn-edit-${index}" class="btn btn-edit" style="padding: 6px 12px; font-size:12px;" onclick="editKeyInline(${index})">编辑</button>
+            ${isActive && isEnabled
               ? `<span class="badge" style="background: rgba(244, 63, 94, 0.15); color: var(--primary); font-weight:600;"><span class="pulse-dot"></span>使用中</span>`
-              : `<button class="btn btn-secondary" style="padding: 6px 12px; font-size:12px;" onclick="setActiveKey(${index})">设为使用</button>`
+              : `<button class="btn btn-secondary" style="padding: 6px 12px; font-size:12px;" ${!isEnabled ? 'disabled' : ''} onclick="setActiveKey(${index})">设为使用</button>`
             }
             <button class="btn btn-danger" style="padding: 6px 12px; font-size:12px;" onclick="deleteKey(${index})">删除</button>
           </div>
         `;
         container.appendChild(keyItem);
       });
+    }
+
+    function editKeyInline(index) {
+      const displayDiv = document.getElementById(`key-display-${index}`);
+      const btnEdit = document.getElementById(`btn-edit-${index}`);
+      const kd = config.keysDetail[index];
+      
+      if (btnEdit.innerText === '编辑') {
+        displayDiv.innerHTML = `<input type="text" class="key-edit-input" id="edit-input-${index}" value="${escapeHtml(kd.key)}">`;
+        btnEdit.innerText = '保存';
+        btnEdit.className = 'btn btn-primary';
+      } else {
+        const inputVal = document.getElementById(`edit-input-${index}`).value.trim();
+        if (!inputVal) {
+          showToast('Key 不能为空', 'error');
+          return;
+        }
+        kd.key = inputVal;
+        btnEdit.innerText = '编辑';
+        btnEdit.className = 'btn btn-edit';
+        saveConfigToServer();
+      }
+    }
+
+    async function toggleKeyEnabled(index, checked) {
+      config.keysDetail[index].enabled = checked;
+      await saveConfigToServer();
     }
 
     function escapeHtml(text) {
@@ -861,7 +967,8 @@
         total_used: 0.0,
         total_remaining: 6.0,
         status: 'Pending Verification',
-        last_checked: ''
+        last_checked: '',
+        enabled: true
       });
       config.keysDetail = list;
       input.value = '';
@@ -893,12 +1000,9 @@
       const user = document.getElementById('smtpUserInput').value.trim();
       const pass = document.getElementById('smtpPassInput').value.trim();
 
-      const list = config.keysDetail || [];
-      const keysArray = list.map(kd => kd.key).filter(Boolean);
-
       try {
         const payload = {
-          keys: keysArray,
+          keysDetail: config.keysDetail,
           mode: config.mode,
           proxyUrl: config.proxyUrl,
           notificationEmail: config.notificationEmail,
@@ -932,16 +1036,13 @@
         showToast('未检测到密码修改');
         return;
       }
-      
-      const list = config.keysDetail || [];
-      const keysArray = list.map(kd => kd.key).filter(Boolean);
 
       try {
         const response = await makeRequest('/api/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            keys: keysArray,
+            keysDetail: config.keysDetail,
             mode: config.mode,
             proxyUrl: config.proxyUrl,
             password: passwordInput
@@ -965,15 +1066,12 @@
     }
 
     async function saveConfigToServer() {
-      const list = config.keysDetail || [];
-      const keysArray = list.map(kd => kd.key).filter(Boolean);
-
       try {
         const response = await makeRequest('/api/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            keys: keysArray,
+            keysDetail: config.keysDetail,
             mode: config.mode,
             proxyUrl: config.proxyUrl,
             notificationEmail: config.notificationEmail,
