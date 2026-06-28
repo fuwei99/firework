@@ -232,8 +232,154 @@ async function initDB() {
   await loadConfigFromDB();
   await migrateFromJsonToDB();
   await loadKeysFromDB();
+  
+  // Write local copies at startup
+  writeLocalBackupFiles();
+  
+  // Setup file sync loop
+  setupFileSyncLoop();
 }
 await initDB();
+
+// Periodically sync in-memory state with local files, and sync to DB on change
+let lastConfigJsonStr = '';
+let lastKeysJsonStr = '';
+
+function writeLocalBackupFiles() {
+  try {
+    const configPath = path.resolve('config.json');
+    const keysPath = path.resolve('keys.json');
+
+    const configObj = {
+      TARGET_HOST,
+      PORT,
+      PASSWORD: clientPassword,
+      OUTBOUND_PROXY: proxyUrl,
+      KEY_MODE: mode,
+      NOTIFICATION_EMAIL: notificationEmail,
+      MAX_ALLOWED_SPEND: maxAllowedSpend,
+      SMTP_HOST: smtpHost,
+      SMTP_PORT: smtpPort,
+      SMTP_SECURE: smtpSecure,
+      SMTP_USER: smtpUser,
+      SMTP_PASS: smtpPass
+    };
+
+    const configJson = JSON.stringify(configObj, null, 2);
+    const keysJson = JSON.stringify(keysDetail, null, 2);
+
+    fs.writeFileSync(configPath, configJson, 'utf8');
+    fs.writeFileSync(keysPath, keysJson, 'utf8');
+
+    lastConfigJsonStr = configJson;
+    lastKeysJsonStr = keysJson;
+  } catch (err) {
+    console.error('[FileSync] Error writing local backup files:', err.message);
+  }
+}
+
+function setupFileSyncLoop() {
+  setInterval(async () => {
+    try {
+      const configPath = path.resolve('config.json');
+      const keysPath = path.resolve('keys.json');
+
+      // 1. Check if local files changed by user or external process
+      let configChanged = false;
+      let keysChanged = false;
+
+      if (fs.existsSync(configPath)) {
+        const currentConfigJson = fs.readFileSync(configPath, 'utf8');
+        if (currentConfigJson !== lastConfigJsonStr) {
+          try {
+            const parsed = JSON.parse(currentConfigJson);
+            TARGET_HOST = parsed.TARGET_HOST || TARGET_HOST;
+            PORT = parsed.PORT || PORT;
+            clientPassword = parsed.PASSWORD || clientPassword;
+            proxyUrl = parsed.OUTBOUND_PROXY || proxyUrl;
+            mode = parsed.KEY_MODE || mode;
+            notificationEmail = parsed.NOTIFICATION_EMAIL || notificationEmail;
+            maxAllowedSpend = typeof parsed.MAX_ALLOWED_SPEND === 'number' ? parsed.MAX_ALLOWED_SPEND : maxAllowedSpend;
+            smtpHost = parsed.SMTP_HOST || smtpHost;
+            smtpPort = parsed.SMTP_PORT || smtpPort;
+            smtpSecure = parsed.SMTP_SECURE !== false;
+            smtpUser = parsed.SMTP_USER || smtpUser;
+            smtpPass = parsed.SMTP_PASS || smtpPass;
+            
+            lastConfigJsonStr = currentConfigJson;
+            configChanged = true;
+            console.log('[FileSync] Detected local config.json change. Syncing to DB...');
+            await saveConfigToDB();
+          } catch (e) {
+            console.error('[FileSync] Error parsing local config.json:', e.message);
+          }
+        }
+      }
+
+      if (fs.existsSync(keysPath)) {
+        const currentKeysJson = fs.readFileSync(keysPath, 'utf8');
+        if (currentKeysJson !== lastKeysJsonStr) {
+          try {
+            const parsed = JSON.parse(currentKeysJson);
+            if (Array.isArray(parsed)) {
+              keysDetail = parsed.map(item => {
+                const existing = keysDetail.find(kd => kd.key === item.key);
+                return {
+                  key: item.key,
+                  account_id: item.account_id || (existing ? existing.account_id : ''),
+                  display_name: item.display_name || (existing ? existing.display_name : 'Fireworks User'),
+                  email: item.email || (existing ? existing.email : ''),
+                  total_used: typeof item.total_used === 'number' ? item.total_used : (existing ? existing.total_used : 0.0),
+                  total_remaining: typeof item.total_remaining === 'number' ? item.total_remaining : (existing ? existing.total_remaining : 6.0),
+                  status: item.status || (existing ? existing.status : 'Active'),
+                  last_checked: item.last_checked || (existing ? existing.last_checked : ''),
+                  enabled: item.enabled !== false,
+                  usage_accumulator: item.usage_accumulator || (existing ? existing.usage_accumulator : {})
+                };
+              });
+              keys = keysDetail.filter(kd => kd.enabled).map(kd => kd.key).filter(Boolean);
+              lastKeysJsonStr = currentKeysJson;
+              keysChanged = true;
+              console.log('[FileSync] Detected local keys.json change. Syncing to DB...');
+              await saveAllKeysDetailToDB();
+            }
+          } catch (e) {
+            console.error('[FileSync] Error parsing local keys.json:', e.message);
+          }
+        }
+      }
+
+      // 2. If memory state changed (e.g. via API or Proxy traffic), sync to local files
+      const memoryConfigObj = {
+        TARGET_HOST,
+        PORT,
+        PASSWORD: clientPassword,
+        OUTBOUND_PROXY: proxyUrl,
+        KEY_MODE: mode,
+        NOTIFICATION_EMAIL: notificationEmail,
+        MAX_ALLOWED_SPEND: maxAllowedSpend,
+        SMTP_HOST: smtpHost,
+        SMTP_PORT: smtpPort,
+        SMTP_SECURE: smtpSecure,
+        SMTP_USER: smtpUser,
+        SMTP_PASS: smtpPass
+      };
+      const memoryConfigJson = JSON.stringify(memoryConfigObj, null, 2);
+      const memoryKeysJson = JSON.stringify(keysDetail, null, 2);
+
+      if (!configChanged && memoryConfigJson !== lastConfigJsonStr) {
+        fs.writeFileSync(configPath, memoryConfigJson, 'utf8');
+        lastConfigJsonStr = memoryConfigJson;
+      }
+      if (!keysChanged && memoryKeysJson !== lastKeysJsonStr) {
+        fs.writeFileSync(keysPath, memoryKeysJson, 'utf8');
+        lastKeysJsonStr = memoryKeysJson;
+      }
+    } catch (err) {
+      console.error('[FileSync] Sync loop error:', err.message);
+    }
+  }, 15000);
+}
 
 /**
  * Mask key for logging purposes.
