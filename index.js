@@ -266,7 +266,16 @@ function writeLocalBackupFiles() {
     };
 
     const configJson = JSON.stringify(configObj, null, 2);
-    const keysJson = JSON.stringify(keysDetail, null, 2);
+    
+    // Add is_used_now dynamically when writing keys.json
+    const keysWithActiveStatus = keysDetail.map(kd => {
+      const isUsedNow = keys[currentIndex] === kd.key;
+      return {
+        ...kd,
+        is_used_now: isUsedNow
+      };
+    });
+    const keysJson = JSON.stringify(keysWithActiveStatus, null, 2);
 
     fs.writeFileSync(configPath, configJson, 'utf8');
     fs.writeFileSync(keysPath, keysJson, 'utf8');
@@ -349,32 +358,41 @@ function setupFileSyncLoop() {
         }
       }
 
-      // 2. If memory state changed (e.g. via API or Proxy traffic), sync to local files
-      const memoryConfigObj = {
-        TARGET_HOST,
-        PORT,
-        PASSWORD: clientPassword,
-        OUTBOUND_PROXY: proxyUrl,
-        KEY_MODE: mode,
-        NOTIFICATION_EMAIL: notificationEmail,
-        MAX_ALLOWED_SPEND: maxAllowedSpend,
-        SMTP_HOST: smtpHost,
-        SMTP_PORT: smtpPort,
-        SMTP_SECURE: smtpSecure,
-        SMTP_USER: smtpUser,
-        SMTP_PASS: smtpPass
+    // 2. If memory state changed (e.g. via API or Proxy traffic), sync to local files
+    const memoryConfigObj = {
+      TARGET_HOST,
+      PORT,
+      PASSWORD: clientPassword,
+      OUTBOUND_PROXY: proxyUrl,
+      KEY_MODE: mode,
+      NOTIFICATION_EMAIL: notificationEmail,
+      MAX_ALLOWED_SPEND: maxAllowedSpend,
+      SMTP_HOST: smtpHost,
+      SMTP_PORT: smtpPort,
+      SMTP_SECURE: smtpSecure,
+      SMTP_USER: smtpUser,
+      SMTP_PASS: smtpPass
+    };
+    const memoryConfigJson = JSON.stringify(memoryConfigObj, null, 2);
+    
+    // Add is_used_now dynamically when writing keys.json
+    const keysWithActiveStatus = keysDetail.map(kd => {
+      const isUsedNow = keys[currentIndex] === kd.key;
+      return {
+        ...kd,
+        is_used_now: isUsedNow
       };
-      const memoryConfigJson = JSON.stringify(memoryConfigObj, null, 2);
-      const memoryKeysJson = JSON.stringify(keysDetail, null, 2);
+    });
+    const memoryKeysJson = JSON.stringify(keysWithActiveStatus, null, 2);
 
-      if (!configChanged && memoryConfigJson !== lastConfigJsonStr) {
-        fs.writeFileSync(configPath, memoryConfigJson, 'utf8');
-        lastConfigJsonStr = memoryConfigJson;
-      }
-      if (!keysChanged && memoryKeysJson !== lastKeysJsonStr) {
-        fs.writeFileSync(keysPath, memoryKeysJson, 'utf8');
-        lastKeysJsonStr = memoryKeysJson;
-      }
+    if (!configChanged && memoryConfigJson !== lastConfigJsonStr) {
+      fs.writeFileSync(configPath, memoryConfigJson, 'utf8');
+      lastConfigJsonStr = memoryConfigJson;
+    }
+    if (!keysChanged && memoryKeysJson !== lastKeysJsonStr) {
+      fs.writeFileSync(keysPath, memoryKeysJson, 'utf8');
+      lastKeysJsonStr = memoryKeysJson;
+    }
     } catch (err) {
       console.error('[FileSync] Sync loop error:', err.message);
     }
