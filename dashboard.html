@@ -783,6 +783,7 @@
         <div>
           <h2 style="font-size: 20px; font-weight: 600;">Key 详细模型用量 (累计)</h2>
           <p id="usageModalSub" style="font-size: 13px; color: var(--text-muted); margin-top: 4px; font-family: monospace;"></p>
+          <p style="font-size: 14px; margin-top: 8px; font-weight: 600; color: var(--warning);">预估总花费 (累计): <span id="usageModalTotalCost" style="font-family: monospace; font-size: 16px;">$0.000000</span></p>
         </div>
         <button class="modal-close" onclick="closeUsageModal()">&times;</button>
       </div>
@@ -796,11 +797,12 @@
               <th style="text-align: right;">累计缓存命中 Token (折价)</th>
               <th style="text-align: right;">累计输出 Token</th>
               <th style="text-align: right;">总计 Token</th>
+              <th style="text-align: right;">预估花费</th>
             </tr>
           </thead>
           <tbody id="usageTableBody">
             <tr>
-              <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-muted); font-style: italic;">暂无用量数据</td>
+              <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-muted); font-style: italic;">暂无用量数据</td>
             </tr>
           </tbody>
         </table>
@@ -1338,15 +1340,18 @@
       const models = Object.keys(totalUsage);
 
       if (models.length === 0) {
+        document.getElementById('usageModalTotalCost').innerText = '$0.000000';
         tbody.innerHTML = `
           <tr>
-            <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-muted); font-style: italic;">暂无累计用量记录</td>
+            <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-muted); font-style: italic;">暂无累计用量记录</td>
           </tr>
         `;
         return;
       }
 
       tbody.innerHTML = '';
+      let grandTotalCost = 0;
+
       models.forEach(modelId => {
         const data = totalUsage[modelId];
         const prompt = data.prompt_tokens || 0;
@@ -1356,6 +1361,83 @@
         const total = prompt + completion;
         const requests = data.requests || 0;
 
+        // Calculate estimated cost using same logic as backend
+        let inputRate = 0.90;
+        let cachedRate = null;
+        let outputRate = 0.90;
+
+        const modelLower = modelId.toLowerCase();
+        const cleanModel = modelLower.replace(/^accounts\/fireworks\/models\//, '').replace(/^fireworks\//, '');
+        
+        // Find rates from local models list in client config if possible
+        // We can fallback to the generic size-based pricing
+        let found = false;
+        
+        // Match against models in models.json via config
+        // Since we don't have the full models.json raw on client easily, we can reconstruct the matching logic
+        // Or we can just fetch it or hardcode a simple client-side resolver. Let's do a client-side match based on known models
+        const localModelsPriceTable = {
+          "glm-5.2": { input: 1.40, cached: 0.14, output: 4.40 },
+          "glm-5.1": { input: 1.40, cached: 0.26, output: 4.40 },
+          "kimi-k2.7-code": { input: 0.95, cached: 0.19, output: 4.00 },
+          "kimi-k2.6": { input: 0.95, cached: 0.16, output: 4.00 },
+          "minimax-m3": { input: 0.30, cached: 0.06, output: 1.20 },
+          "minimax-m2.7": { input: 0.30, cached: 0.06, output: 1.20 },
+          "qwen-3.7-plus": { input: 0.40, cached: 0.08, output: 1.60 },
+          "deepseek-v4-pro": { input: 1.74, cached: 0.15, output: 3.48 },
+          "deepseek-v4-flash": { input: 0.14, cached: 0.03, output: 0.28 },
+          "gpt-oss-120b": { input: 0.15, cached: 0.01, output: 0.60 },
+          "gpt-oss-20b": { input: 0.07, cached: 0.04, output: 0.30 },
+          "qwen3-embedding-8b": { input: 0.10, cached: 0.10, output: 0.00 },
+          "qwen3-reranker-8b": { input: 0.20, cached: 0.20, output: 0.00 },
+          "nemotron-3-ultra-nvfp4": { input: 0.60, cached: 0.12, output: 2.40 }
+        };
+
+        for (const [beautifulId, prices] of Object.entries(localModelsPriceTable)) {
+          if (cleanModel === beautifulId || modelLower.includes(beautifulId)) {
+            inputRate = prices.input;
+            cachedRate = prices.cached;
+            outputRate = prices.output;
+            found = true;
+            break;
+          }
+        }
+
+        if (!found) {
+          // Fallback logic
+          if (modelLower.includes('moe')) {
+            if (modelLower.includes('8x7b')) {
+              inputRate = 0.50;
+              outputRate = 0.50;
+            } else {
+              inputRate = 1.20;
+              outputRate = 1.20;
+            }
+          } else {
+            const paramMatch = modelLower.match(/(\d+)b/);
+            if (paramMatch) {
+              const size = parseInt(paramMatch[1], 10);
+              if (size < 4) {
+                inputRate = 0.10;
+                outputRate = 0.10;
+              } else if (size <= 16) {
+                inputRate = 0.20;
+                outputRate = 0.20;
+              } else {
+                inputRate = 0.90;
+                outputRate = 0.90;
+              }
+            }
+          }
+        }
+
+        if (cachedRate === null) {
+          cachedRate = inputRate * 0.5;
+        }
+
+        const modelCost = (uncached * inputRate + cached * cachedRate + completion * outputRate) / 1000000;
+        grandTotalCost += modelCost;
+
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td style="padding: 12px 8px; font-family: monospace;">${escapeHtml(modelId)}</td>
@@ -1364,9 +1446,12 @@
           <td style="padding: 12px 8px; text-align: right; font-family: monospace; color: #fb7185;">${cached.toLocaleString()}</td>
           <td style="padding: 12px 8px; text-align: right; font-family: monospace;">${completion.toLocaleString()}</td>
           <td style="padding: 12px 8px; text-align: right; font-family: monospace; font-weight: 500; color: var(--warning);">${total.toLocaleString()}</td>
+          <td style="padding: 12px 8px; text-align: right; font-family: monospace; color: var(--warning); font-weight: 500;">$${modelCost.toFixed(6)}</td>
         `;
         tbody.appendChild(tr);
       });
+
+      document.getElementById('usageModalTotalCost').innerText = `$${grandTotalCost.toFixed(6)}`;
     }
   </script>
 </body>
