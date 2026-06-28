@@ -381,6 +381,105 @@
       color: #fff;
     }
 
+    .btn-info {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      color: var(--success);
+    }
+
+    .btn-info:hover {
+      background: var(--success);
+      color: #fff;
+    }
+
+    /* Modal Style */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1500;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    .modal-overlay.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-card {
+      width: 90%;
+      max-width: 800px;
+      max-height: 85vh;
+      padding: 30px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overflow-y: auto;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 15px;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 24px;
+      cursor: pointer;
+      transition: color 0.3s ease;
+    }
+
+    .modal-close:hover {
+      color: var(--primary);
+    }
+
+    .usage-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    .usage-table th {
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-color);
+      padding: 12px 8px;
+    }
+
+    .usage-table td {
+      padding: 12px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    .usage-table tbody tr:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .month-select {
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border-color);
+      padding: 8px 16px;
+      border-radius: 6px;
+      color: var(--text-main);
+      font-size: 14px;
+      outline: none;
+    }
+
     .mode-selector {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -677,6 +776,38 @@
   <!-- Toast Element -->
   <div id="toast" class="toast"></div>
 
+  <!-- Usage Modal -->
+  <div id="usageModal" class="modal-overlay">
+    <div class="modal-card glass">
+      <div class="modal-header">
+        <div>
+          <h2 style="font-size: 20px; font-weight: 600;">Key 详细模型用量 (累计)</h2>
+          <p id="usageModalSub" style="font-size: 13px; color: var(--text-muted); margin-top: 4px; font-family: monospace;"></p>
+        </div>
+        <button class="modal-close" onclick="closeUsageModal()">&times;</button>
+      </div>
+      <div style="overflow-x: auto;">
+        <table class="usage-table">
+          <thead>
+            <tr>
+              <th>模型 ID</th>
+              <th style="text-align: right;">累计请求次数</th>
+              <th style="text-align: right;">累计未命中 Token (全价)</th>
+              <th style="text-align: right;">累计缓存命中 Token (折价)</th>
+              <th style="text-align: right;">累计输出 Token</th>
+              <th style="text-align: right;">总计 Token</th>
+            </tr>
+          </thead>
+          <tbody id="usageTableBody">
+            <tr>
+              <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-muted); font-style: italic;">暂无用量数据</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <script>
     let config = {
       keysDetail: [],
@@ -886,6 +1017,7 @@
               <span class="slider"></span>
             </label>
             <button id="btn-edit-${index}" class="btn btn-edit" style="padding: 6px 12px; font-size:12px;" onclick="editKeyInline(${index})">编辑</button>
+            <button class="btn btn-info" style="padding: 6px 12px; font-size:12px;" onclick="showUsageModal(${index})">用量</button>
             ${isActive && isEnabled
               ? `<span class="badge" style="background: rgba(244, 63, 94, 0.15); color: var(--primary); font-weight:600;"><span class="pulse-dot"></span>使用中</span>`
               : `<button class="btn btn-secondary" style="padding: 6px 12px; font-size:12px;" ${!isEnabled ? 'disabled' : ''} onclick="setActiveKey(${index})">设为使用</button>`
@@ -1158,6 +1290,83 @@
       } catch (err) {
         showToast('清空记录失败', 'error');
       }
+    }
+
+    let currentUsageKeyIndex = null;
+
+    function showUsageModal(index) {
+      currentUsageKeyIndex = index;
+      const kd = config.keysDetail[index];
+      if (!kd) return;
+
+      document.getElementById('usageModalSub').innerText = kd.key;
+      renderUsageTable(kd);
+
+      document.getElementById('usageModal').classList.add('show');
+    }
+
+    function closeUsageModal() {
+      document.getElementById('usageModal').classList.remove('show');
+      currentUsageKeyIndex = null;
+    }
+
+    function renderUsageTable(kd) {
+      const tbody = document.getElementById('usageTableBody');
+      const acc = kd.usage_accumulator || {};
+      
+      // Aggregate data from all months
+      const totalUsage = {};
+      Object.keys(acc).forEach(month => {
+        const monthData = acc[month] || {};
+        Object.keys(monthData).forEach(modelId => {
+          const data = monthData[modelId] || {};
+          if (!totalUsage[modelId]) {
+            totalUsage[modelId] = {
+              prompt_tokens: 0,
+              cached_tokens: 0,
+              completion_tokens: 0,
+              requests: 0
+            };
+          }
+          totalUsage[modelId].prompt_tokens += (data.prompt_tokens || 0);
+          totalUsage[modelId].cached_tokens += (data.cached_tokens || 0);
+          totalUsage[modelId].completion_tokens += (data.completion_tokens || 0);
+          totalUsage[modelId].requests += (data.requests || 0);
+        });
+      });
+
+      const models = Object.keys(totalUsage);
+
+      if (models.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-muted); font-style: italic;">暂无累计用量记录</td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = '';
+      models.forEach(modelId => {
+        const data = totalUsage[modelId];
+        const prompt = data.prompt_tokens || 0;
+        const cached = data.cached_tokens || 0;
+        const completion = data.completion_tokens || 0;
+        const uncached = Math.max(0, prompt - cached);
+        const total = prompt + completion;
+        const requests = data.requests || 0;
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td style="padding: 12px 8px; font-family: monospace;">${escapeHtml(modelId)}</td>
+          <td style="padding: 12px 8px; text-align: right;">${requests}</td>
+          <td style="padding: 12px 8px; text-align: right; font-family: monospace;">${uncached.toLocaleString()}</td>
+          <td style="padding: 12px 8px; text-align: right; font-family: monospace; color: #fb7185;">${cached.toLocaleString()}</td>
+          <td style="padding: 12px 8px; text-align: right; font-family: monospace;">${completion.toLocaleString()}</td>
+          <td style="padding: 12px 8px; text-align: right; font-family: monospace; font-weight: 500; color: var(--warning);">${total.toLocaleString()}</td>
+        `;
+        tbody.appendChild(tr);
+      });
     }
   </script>
 </body>
