@@ -329,7 +329,7 @@ async function sendNotificationEmail(newlyExcessiveKey) {
 }
 
 async function fetchAccountsAndSpend() {
-  if (keys.length === 0) return;
+  if (keysDetail.length === 0) return;
   const dispatcher = getProxyDispatcher(proxyUrl);
   
   let totalUsage = 0;
@@ -339,8 +339,8 @@ async function fetchAccountsAndSpend() {
   const startTime = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const endTime = now.toISOString();
 
-  for (let i = 0; i < keysDetail.length; i++) {
-    const kd = keysDetail[i];
+  // Run checks in parallel to prevent UI blocking
+  const checkPromises = keysDetail.map(async (kd) => {
     const verifyOptions = {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${kd.key}` }
@@ -434,7 +434,9 @@ async function fetchAccountsAndSpend() {
       kd.status = `Connection Error: ${err.message}`;
       kd.last_checked = new Date().toISOString();
     }
-  }
+  });
+
+  await Promise.all(checkPromises);
 
   await saveAllKeysDetailToDB();
   // Refresh active keys array
