@@ -104,23 +104,33 @@ async function loadKeysFromDB() {
     keys = keysDetail.filter(kd => kd.enabled).map(kd => kd.key).filter(Boolean);
     console.log(`[Keys] Loaded ${keysDetail.length} key(s) from database (${keys.length} active/enabled).`);
 
-    // Check if local keys.json has a key marked as is_used_now to restore currentIndex
-    const keysPath = path.resolve('keys.json');
-    if (fs.existsSync(keysPath)) {
-      try {
-        const localKeys = JSON.parse(fs.readFileSync(keysPath, 'utf8'));
-        if (Array.isArray(localKeys)) {
-          const activeLocalKey = localKeys.find(k => k.is_used_now === true);
-          if (activeLocalKey) {
-            const idx = keys.indexOf(activeLocalKey.key);
-            if (idx !== -1) {
-              currentIndex = idx;
-              console.log(`[Keys] Restored currentIndex to ${currentIndex} (${maskKey(activeLocalKey.key)}) from local keys.json`);
+    // Prioritize restoring currentIndex from DB first
+    const activeDbKeyRow = res.rows.find(row => row.is_used_now === true);
+    if (activeDbKeyRow) {
+      const idx = keys.indexOf(activeDbKeyRow.key);
+      if (idx !== -1) {
+        currentIndex = idx;
+        console.log(`[Keys] Restored currentIndex to ${currentIndex} (${maskKey(activeDbKeyRow.key)}) from Supabase`);
+      }
+    } else {
+      // Fallback: Check if local keys.json has a key marked as is_used_now to restore
+      const keysPath = path.resolve('keys.json');
+      if (fs.existsSync(keysPath)) {
+        try {
+          const localKeys = JSON.parse(fs.readFileSync(keysPath, 'utf8'));
+          if (Array.isArray(localKeys)) {
+            const activeLocalKey = localKeys.find(k => k.is_used_now === true);
+            if (activeLocalKey) {
+              const idx = keys.indexOf(activeLocalKey.key);
+              if (idx !== -1) {
+                currentIndex = idx;
+                console.log(`[Keys] Restored currentIndex to ${currentIndex} (${maskKey(activeLocalKey.key)}) from local keys.json`);
+              }
             }
           }
+        } catch (e) {
+          // Ignore parsing errors at startup
         }
-      } catch (e) {
-        // Ignore parsing errors at startup
       }
     }
   } catch (err) {
@@ -158,9 +168,10 @@ async function saveConfigToDB() {
 // Save single key detail to DB
 async function saveKeyDetailToDB(kd) {
   try {
+    const isUsedNow = keys[currentIndex] === kd.key;
     await pool.query(`
-      INSERT INTO fw_keys (key, account_id, display_name, email, status, last_checked, total_used, total_remaining, enabled, usage_accumulator)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      INSERT INTO fw_keys (key, account_id, display_name, email, status, last_checked, total_used, total_remaining, enabled, usage_accumulator, is_used_now)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT (key) DO UPDATE SET
         account_id = EXCLUDED.account_id,
         display_name = EXCLUDED.display_name,
@@ -170,7 +181,8 @@ async function saveKeyDetailToDB(kd) {
         total_used = EXCLUDED.total_used,
         total_remaining = EXCLUDED.total_remaining,
         enabled = EXCLUDED.enabled,
-        usage_accumulator = EXCLUDED.usage_accumulator
+        usage_accumulator = EXCLUDED.usage_accumulator,
+        is_used_now = EXCLUDED.is_used_now
     `, [
       kd.key,
       kd.account_id,
@@ -181,7 +193,8 @@ async function saveKeyDetailToDB(kd) {
       kd.total_used,
       kd.total_remaining,
       kd.enabled !== false,
-      JSON.stringify(kd.usage_accumulator || {})
+      JSON.stringify(kd.usage_accumulator || {}),
+      isUsedNow
     ]);
   } catch (err) {
     console.error(`[Keys] Failed to save key ${maskKey(kd.key)} to DB:`, err.message);
@@ -236,7 +249,8 @@ async function migrateFromJsonToDB() {
           total_used: parseFloat(lk.total_used || 0),
           total_remaining: parseFloat(lk.total_remaining || 6.0),
           enabled: lk.enabled !== false,
-          usage_accumulator: lk.usage_accumulator || {}
+          usage_accumulator: lk.usage_accumulator || {},
+          is_used_now: lk.is_used_now === true
         };
         await saveKeyDetailToDB(kd);
       }
