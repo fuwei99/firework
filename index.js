@@ -103,6 +103,26 @@ async function loadKeysFromDB() {
     }));
     keys = keysDetail.filter(kd => kd.enabled).map(kd => kd.key).filter(Boolean);
     console.log(`[Keys] Loaded ${keysDetail.length} key(s) from database (${keys.length} active/enabled).`);
+
+    // Check if local keys.json has a key marked as is_used_now to restore currentIndex
+    const keysPath = path.resolve('keys.json');
+    if (fs.existsSync(keysPath)) {
+      try {
+        const localKeys = JSON.parse(fs.readFileSync(keysPath, 'utf8'));
+        if (Array.isArray(localKeys)) {
+          const activeLocalKey = localKeys.find(k => k.is_used_now === true);
+          if (activeLocalKey) {
+            const idx = keys.indexOf(activeLocalKey.key);
+            if (idx !== -1) {
+              currentIndex = idx;
+              console.log(`[Keys] Restored currentIndex to ${currentIndex} (${maskKey(activeLocalKey.key)}) from local keys.json`);
+            }
+          }
+        }
+      } catch (e) {
+        // Ignore parsing errors at startup
+      }
+    }
   } catch (err) {
     console.error('[Keys] Failed to load keys from DB:', err.message);
   }
@@ -347,6 +367,17 @@ function setupFileSyncLoop() {
                 };
               });
               keys = keysDetail.filter(kd => kd.enabled).map(kd => kd.key).filter(Boolean);
+
+              // Update currentIndex if user changed is_used_now in local keys.json
+              const activeLocalKey = parsed.find(k => k.is_used_now === true);
+              if (activeLocalKey) {
+                const idx = keys.indexOf(activeLocalKey.key);
+                if (idx !== -1 && idx !== currentIndex) {
+                  currentIndex = idx;
+                  console.log(`[FileSync] Updated currentIndex to ${currentIndex} (${maskKey(activeLocalKey.key)}) from local keys.json`);
+                }
+              }
+
               lastKeysJsonStr = currentKeysJson;
               keysChanged = true;
               console.log('[FileSync] Detected local keys.json change. Syncing to DB...');
