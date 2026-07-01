@@ -545,21 +545,22 @@ async function fetchAccountsAndSpend() {
   let hasValidCheck = false;
 
   const now = new Date();
-  const startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const endTime = now.toISOString();
+  const verifyOptions = {
+    method: 'GET'
+  };
+  if (dispatcher) {
+    verifyOptions.dispatcher = dispatcher;
+  }
 
   // Run checks in parallel to prevent UI blocking
   const checkPromises = keysDetail.map(async (kd) => {
-    const verifyOptions = {
-      method: 'GET',
+    const keyVerifyOptions = {
+      ...verifyOptions,
       headers: { 'Authorization': `Bearer ${kd.key}` }
     };
-    if (dispatcher) {
-      verifyOptions.dispatcher = dispatcher;
-    }
 
     try {
-      const resVerify = await fetch('https://api.fireworks.ai/v1/accounts', verifyOptions);
+      const resVerify = await fetch('https://api.fireworks.ai/v1/accounts', keyVerifyOptions);
       if (resVerify.status === 200) {
         const responseData = await resVerify.json();
         const accountInfo = responseData.accounts?.[0];
@@ -572,18 +573,45 @@ async function fetchAccountsAndSpend() {
             kd.display_name = accountInfo.displayName || 'Fireworks User';
             kd.email = accountInfo.email || '';
 
-            const billingUrl = `https://api.fireworks.ai/v1/accounts/${accountId}/billingUsage?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}&usageType=SERVERLESS&groupBy=api_key_id&groupBy=api_key_name&groupBy=model_name`;
-            const billingRes = await fetch(billingUrl, verifyOptions);
+            // Split query into 30-day chunks to bypass the 31-day API limitation
+            const chunks = [];
+            let currentStart = new Date(Date.UTC(2026, 0, 1)); // Jan 1 2026
+            while (currentStart < now) {
+              const currentEnd = new Date(currentStart.getTime() + 30 * 24 * 60 * 60 * 1000); // +30 days
+              const endToUse = currentEnd > now ? now : currentEnd;
+              chunks.push({
+                startTime: currentStart.toISOString(),
+                endTime: endToUse.toISOString()
+              });
+              currentStart = new Date(currentEnd.getTime() + 1000); // Start next second after current chunk ends
+            }
+
+            let serverlessCosts = [];
+            let billingApiSuccess = true;
+            let lastErrorStatus = null;
+
+            for (const chunk of chunks) {
+              const billingUrl = `https://api.fireworks.ai/v1/accounts/${accountId}/billingUsage?startTime=${encodeURIComponent(chunk.startTime)}&endTime=${encodeURIComponent(chunk.endTime)}&usageType=SERVERLESS&groupBy=api_key_id&groupBy=api_key_name&groupBy=model_name`;
+              const billingRes = await fetch(billingUrl, keyVerifyOptions);
+              if (billingRes.status === 200) {
+                const billingData = await billingRes.json();
+                if (billingData.serverlessCosts && billingData.serverlessCosts.length > 0) {
+                  serverlessCosts = serverlessCosts.concat(billingData.serverlessCosts);
+                }
+              } else {
+                billingApiSuccess = false;
+                lastErrorStatus = billingRes.status;
+                break;
+              }
+            }
             
-            if (billingRes.status === 200) {
-              const billingData = await billingRes.json();
-              const serverlessCosts = billingData.serverlessCosts || [];
-              
+            if (billingApiSuccess) {
+              const billingData = { serverlessCosts };
               let targetKeyId = null;
               try {
                 const userId = accountId;
                 const keysListUrl = `https://api.fireworks.ai/v1/accounts/${accountId}/users/${userId}/apiKeys`;
-                const keysListRes = await fetch(keysListUrl, verifyOptions);
+                const keysListRes = await fetch(keysListUrl, keyVerifyOptions);
                 if (keysListRes.status === 200) {
                   const keysListData = await keysListRes.json();
                   const matchedKeyObj = (keysListData.apiKeys || []).find(k => kd.key.startsWith(k.prefix || ''));
@@ -630,7 +658,7 @@ async function fetchAccountsAndSpend() {
               totalUsage += kd.total_used;
               hasValidCheck = true;
             } else {
-              kd.status = `Billing API Error ${billingRes.status}`;
+              kd.status = `Billing API Error ${lastErrorStatus}`;
               kd.last_checked = new Date().toISOString();
             }
           }
