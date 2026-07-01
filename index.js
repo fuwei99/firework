@@ -545,7 +545,7 @@ async function fetchAccountsAndSpend() {
   let hasValidCheck = false;
 
   const now = new Date();
-  const startTime = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const startTime = '2026-01-01T00:00:00.000Z';
   const endTime = now.toISOString();
 
   // Run checks in parallel to prevent UI blocking
@@ -607,12 +607,17 @@ async function fetchAccountsAndSpend() {
                 modelAgg[model].completionTokens += parseInt(costItem.completionTokens || '0', 10);
               }
 
-              const accMonthKey = getAccumulatorMonthKey();
-              const accForMonth = (kd.usage_accumulator && kd.usage_accumulator[accMonthKey]) || {};
-
               let calculatedSpend = 0;
               for (const [model, agg] of Object.entries(modelAgg)) {
-                const cachedFromAcc = (accForMonth[model] && accForMonth[model].cached_tokens) || 0;
+                // Sum cached tokens from all month keys in the accumulator for this model
+                let cachedFromAcc = 0;
+                if (kd.usage_accumulator && typeof kd.usage_accumulator === 'object') {
+                  for (const monthData of Object.values(kd.usage_accumulator)) {
+                    if (monthData && monthData[model]) {
+                      cachedFromAcc += monthData[model].cached_tokens || 0;
+                    }
+                  }
+                }
                 const applicableCached = Math.min(cachedFromAcc, agg.promptTokens);
                 calculatedSpend += estimateCost(model, agg.promptTokens, agg.completionTokens, applicableCached, false);
               }
