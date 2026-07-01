@@ -575,7 +575,7 @@ async function fetchAccountsAndSpend() {
 
             // Split query into 30-day chunks to bypass the 31-day API limitation
             const chunks = [];
-            let currentStart = new Date(Date.UTC(2026, 0, 1)); // Jan 1 2026
+            let currentStart = new Date(Date.UTC(2026, 5, 1)); // Jun 1 2026
             while (currentStart < now) {
               const currentEnd = new Date(currentStart.getTime() + 30 * 24 * 60 * 60 * 1000); // +30 days
               const endToUse = currentEnd > now ? now : currentEnd;
