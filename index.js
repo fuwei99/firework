@@ -545,7 +545,7 @@ async function fetchAccountsAndSpend() {
   let hasValidCheck = false;
 
   const now = new Date();
-  const startTime = '2026-01-01T00:00:00.000Z';
+  const startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const endTime = now.toISOString();
 
   // Run checks in parallel to prevent UI blocking
